@@ -95,11 +95,36 @@ function toUTF16String(pointer, size) {
     return string;
 }
 
+function twoIntsToDouble(upper, lower) {
+    var buffer = new ArrayBuffer(8);
+    var ints = new Int32Array(buffer);
+    var doubles = new Float64Array(buffer);
+    ints[1] = upper;
+    ints[0] = lower;
+    return doubles[0];
+}
+
+function doubleToTwoInts(value) {
+    var buffer = new ArrayBuffer(8);
+    var ints = new Int32Array(buffer);
+    var doubles = new Float64Array(buffer);
+    doubles[0] = value;
+    var twoInts = {upper: ints[1], lower: ints[2]};
+    return twoInts
+}
+
 function int32ToHeap(value, pointer) {
     heap[pointer]   = value & 0xff;
     heap[pointer+1] = (value & 0xff00) >>> 8;
     heap[pointer+2] = (value & 0xff0000) >>> 16;
     heap[pointer+3] = (value & 0xff000000) >>> 24;
+}
+
+function doubleToHeap(value, pointer) {
+    var twoInts = doubleToTwoInts(value);
+    int32ToHeap(twoInts.lower, pointer);
+    int32ToHeap(twoInts.upper, pointer + 4);
+    return pointer;
 }
 
 function stackTop() {

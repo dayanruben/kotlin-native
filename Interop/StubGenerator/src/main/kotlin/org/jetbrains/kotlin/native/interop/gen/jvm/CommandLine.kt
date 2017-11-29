@@ -19,7 +19,7 @@ package org.jetbrains.kotlin.native.interop.tool
 import org.jetbrains.kotlin.cli.common.arguments.*
 
 open class CommonInteropArguments : CommonToolArguments() {
-    @Argument(value = "-flavor", valueDescription = "<flavor>", description = "One of: jvm, native")
+    @Argument(value = "-flavor", valueDescription = "<flavor>", description = "One of: jvm, native or wasm")
     var flavor: String? = null
 
     @Argument(value = "-pkg", valueDescription = "<fully qualified name>", description = "place generated bindings to the package")
@@ -27,6 +27,10 @@ open class CommonInteropArguments : CommonToolArguments() {
 
     @Argument(value = "-generated", valueDescription = "<dir>", description = "place generated bindings to the directory")
     var generated: String? = null
+
+    @Argument(value = "-natives", valueDescription = "<directory>", description = "where to put the built native files") 
+    var natives: String? = null
+
 }
 
 class CInteropArguments : CommonInteropArguments() {
@@ -35,9 +39,6 @@ class CInteropArguments : CommonInteropArguments() {
 
     @Argument(value = "-target", valueDescription = "<target>", description = "native target to compile to") 
     var target: String? = null
-
-    @Argument(value = "-natives", valueDescription = "<directory>", description = "where to put the built native files") 
-    var natives: String? = null
 
     @Argument(value = "-def", valueDescription = "<file>", description = "the library definition file") 
     var def: String? = null
