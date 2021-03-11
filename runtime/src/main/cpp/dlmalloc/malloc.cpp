@@ -1,3 +1,5 @@
+// Uses GNU extension on null pointer arithmetic.
+#pragma clang diagnostic ignored "-Wnull-pointer-arithmetic"
 /*
   This is a version (aka dlmalloc) of malloc/free/realloc written by
   Doug Lea and released to the public domain, as explained at
@@ -529,9 +531,9 @@ MAX_RELEASE_CHECK_RATE   default: 4095 unless not HAVE_MMAP
 #define USE_LOCKS 0
 #define LACKS_TIME_H 1
 #define NO_MALLOC_STATS 1
-#define HAVE_MMAP 0 // don't try to allocate large chunks of memory using mmap(). 
+#define HAVE_MMAP 0 // don't try to allocate large chunks of memory using mmap().
                     // It will go to malloc->calloc->sbrk->morecore chain anyways.
-#else 
+#else
 #define USE_LOCKS 1
 #endif
 #define DLMALLOC_EXPORT extern "C"

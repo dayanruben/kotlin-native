@@ -14,16 +14,18 @@
   * limitations under the License.
   */
 
+#include "KString.h"
 #include "Memory.h"
 #include "Natives.h"
+#include "Porting.h"
 #include "Runtime.h"
-#include "KString.h"
 #include "Types.h"
 
 #ifdef KONAN_ANDROID
 
 #include <unistd.h>
 #include <pthread.h>
+#include <sys/errno.h>
 #include <sys/types.h>
 #include <sys/socket.h>
 
@@ -79,6 +81,7 @@ void launchMain() {
     Konan_start(args.obj());
   }
 
+  // TODO: Can we shutdown runtime here?
   Kotlin_deinitRuntimeIfNeeded();
 }
 
@@ -141,13 +144,13 @@ void onStart(ANativeActivity* activity) {
 
 void onResume(ANativeActivity* activity) {
   LOGV("onResume called");
-  NativeActivitySaveStateEvent event = { RESUME };
+  NativeActivitySaveStateEvent event = { RESUME, nullptr, 0 };
   putEventSynchronously(&event);
 }
 
 void* onSaveInstanceState(ANativeActivity* activity, size_t* outLen) {
   LOGV("onSaveInstanceState called");
-  NativeActivitySaveStateEvent event = { SAVE_INSTANCE_STATE };
+  NativeActivitySaveStateEvent event = { SAVE_INSTANCE_STATE, nullptr, 0 };
   putEventSynchronously(&event);
   *outLen = event.savedStateSize;
   return event.savedState;
@@ -212,9 +215,8 @@ extern "C" void RUNTIME_USED Konan_main(
     ANativeActivity* activity, void* savedState, size_t savedStateSize) {
   bool launchThread = activity->instance == nullptr;
   if (launchThread) {
-    launcherState = (LauncherState*)calloc(sizeof(LauncherState), 1);
+    launcherState = (LauncherState*)konan::calloc(sizeof(LauncherState), 1);
     launcherState->nativeActivityState = {activity, savedState, savedStateSize, nullptr};
-
     activity->instance = launcherState;
     activity->callbacks->onDestroy = onDestroy;
     activity->callbacks->onStart = onStart;

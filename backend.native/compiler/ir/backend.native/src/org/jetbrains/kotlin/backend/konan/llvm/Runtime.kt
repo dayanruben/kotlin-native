@@ -1,26 +1,14 @@
 /*
- * Copyright 2010-2017 JetBrains s.r.o.
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Copyright 2010-2018 JetBrains s.r.o. Use of this source code is governed by the Apache 2.0 license
+ * that can be found in the LICENSE file.
  */
 
 package org.jetbrains.kotlin.backend.konan.llvm
 
 import kotlinx.cinterop.*
 import llvm.*
-import org.jetbrains.kotlin.types.KotlinType
-import org.jetbrains.kotlin.types.typeUtil.isNothing
-import org.jetbrains.kotlin.types.typeUtil.isUnit
+import org.jetbrains.kotlin.ir.types.IrType
+import org.jetbrains.kotlin.ir.declarations.IrFunction
 
 interface RuntimeAware {
     val runtime: Runtime
@@ -28,40 +16,41 @@ interface RuntimeAware {
 
 class Runtime(bitcodeFile: String) {
     val llvmModule: LLVMModuleRef = parseBitcodeFile(bitcodeFile)
+    val calculatedLLVMTypes: MutableMap<IrType, LLVMTypeRef> = HashMap()
+    val addedLLVMExternalFunctions: MutableMap<IrFunction, LLVMValueRef> = HashMap()
 
     internal fun getStructTypeOrNull(name: String) = LLVMGetTypeByName(llvmModule, "struct.$name")
-    internal fun getStructType(name: String) = getStructTypeOrNull(name)!!
+    internal fun getStructType(name: String) = getStructTypeOrNull(name)
+            ?: throw Error("struct.$name is not found in the Runtime module.")
 
     val typeInfoType = getStructType("TypeInfo")
+    val extendedTypeInfoType = getStructType("ExtendedTypeInfo")
     val writableTypeInfoType = getStructTypeOrNull("WritableTypeInfo")
-    val fieldTableRecordType = getStructType("FieldTableRecord")
     val methodTableRecordType = getStructType("MethodTableRecord")
+    val interfaceTableRecordType = getStructType("InterfaceTableRecord")
     val globalHashType = getStructType("GlobalHash")
+    val associatedObjectTableRecordType = getStructType("AssociatedObjectTableRecord")
 
     val objHeaderType = getStructType("ObjHeader")
     val objHeaderPtrType = pointerType(objHeaderType)
+    val objHeaderPtrPtrType = pointerType(objHeaderType)
     val arrayHeaderType = getStructType("ArrayHeader")
 
     val frameOverlayType = getStructType("FrameOverlay")
 
     val target = LLVMGetTarget(llvmModule)!!.toKString()
 
-    // TODO: deduce TLS model from explicit config parameter.
-    val tlsMode by lazy {
-        if (target.indexOf("wasm") != -1) LLVMThreadLocalMode.LLVMNotThreadLocal
-        else LLVMThreadLocalMode.LLVMGeneralDynamicTLSModel
-    }
     val dataLayout = LLVMGetDataLayout(llvmModule)!!.toKString()
 
     val targetData = LLVMCreateTargetData(dataLayout)!!
 
+    val kotlinObjCClassData by lazy { getStructType("KotlinObjCClassData") }
     val kotlinObjCClassInfo by lazy { getStructType("KotlinObjCClassInfo") }
     val objCMethodDescription by lazy { getStructType("ObjCMethodDescription") }
     val objCTypeAdapter by lazy { getStructType("ObjCTypeAdapter") }
     val objCToKotlinMethodAdapter by lazy { getStructType("ObjCToKotlinMethodAdapter") }
     val kotlinToObjCMethodAdapter by lazy { getStructType("KotlinToObjCMethodAdapter") }
     val typeInfoObjCExportAddition by lazy { getStructType("TypeInfoObjCExportAddition") }
-
 
     val pointerSize: Int by lazy {
         LLVMABISizeOfType(targetData, objHeaderPtrType).toInt()

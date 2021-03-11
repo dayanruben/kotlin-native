@@ -18,7 +18,7 @@
 #include <stdio.h>
 #include <string.h>
 
-#include "Assert.h"
+#include "KAssert.h"
 #include "Exceptions.h"
 #include "Memory.h"
 #include "Natives.h"
@@ -41,7 +41,8 @@ template <typename T> OBJ_GETTER(Kotlin_toStringRadix, T value, KInt radix) {
   if (value == 0) {
     RETURN_RESULT_OF(CreateStringFromCString, "0");
   }
-  char cstring[sizeof(T) * CHAR_BIT + 1];
+  // In the worst case, we convert to binary, with sign.
+  char cstring[sizeof(T) * CHAR_BIT + 2];
   bool negative = (value < 0);
   if  (!negative) {
     value = -value;
@@ -75,8 +76,7 @@ OBJ_GETTER(Kotlin_Byte_toString, KByte value) {
 }
 
 OBJ_GETTER(Kotlin_Char_toString, KChar value) {
-  ArrayHeader* result = AllocArrayInstance(
-      theStringTypeInfo, 1, OBJ_RESULT)->array();
+  ArrayHeader* result = AllocArrayInstance(theStringTypeInfo, 1, OBJ_RESULT)->array();
   *CharArrayAddressOfElementAt(result, 0) = value;
   RETURN_OBJ(result->obj());
 }
@@ -105,6 +105,18 @@ OBJ_GETTER(Kotlin_Long_toString, KLong value) {
 
 OBJ_GETTER(Kotlin_Long_toStringRadix, KLong value, KInt radix) {
   RETURN_RESULT_OF(Kotlin_toStringRadix<KLong>, value, radix)
+}
+
+OBJ_GETTER(Kotlin_DurationValue_formatToExactDecimals, KDouble value, KInt decimals) {
+  char cstring[32];
+  konan::snprintf(cstring, sizeof(cstring), "%.*f", decimals, value);
+  RETURN_RESULT_OF(CreateStringFromCString, cstring)
+}
+
+OBJ_GETTER(Kotlin_DurationValue_formatScientificImpl, KDouble value) {
+  char cstring[16];
+  konan::snprintf(cstring, sizeof(cstring), "%.2e", value);
+  RETURN_RESULT_OF(CreateStringFromCString, cstring)
 }
 
 } // extern "C"

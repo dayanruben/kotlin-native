@@ -57,3 +57,41 @@ int (^getSupplier(int x))(void) {
 Class (^ _Nonnull getClassGetter(NSObject* obj))() {
     return ^{ return obj.class; };
 }
+
+NSString* globalString = @"Global string";
+NSObject* globalObject = nil;
+
+int formatStringLength(NSString* format, ...) {
+  va_list args;
+  va_start(args, format);
+  NSString* result = [[NSString alloc] initWithFormat:format arguments:args];
+  va_end(args);
+  return result.length;
+}
+
+BOOL unexpectedDeallocation = NO;
+
+@implementation MustNotBeDeallocated
+-(void)dealloc {
+  unexpectedDeallocation = YES;
+}
+@end;
+
+static CustomRetainMethodsImpl* retainedCustomRetainMethodsImpl;
+
+@implementation CustomRetainMethodsImpl
+-(id)returnRetained:(id)obj __attribute__((ns_returns_retained)) {
+    return obj;
+}
+
+-(void)consume:(id) __attribute__((ns_consumed)) obj {
+}
+
+-(void)consumeSelf __attribute__((ns_consumes_self)) {
+  retainedCustomRetainMethodsImpl = self; // Retain to detect possible over-release.
+}
+
+-(void (^)(void))returnRetainedBlock:(void (^)(void))block __attribute__((ns_returns_retained)) {
+    return block;
+}
+@end;

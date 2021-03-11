@@ -16,8 +16,26 @@
 
 package kotlinx.cinterop
 
-internal fun decodeFromUtf8(bytes: ByteArray) = String(bytes)
+import org.jetbrains.kotlin.konan.util.KonanHomeProvider
+import java.io.File
+import java.nio.file.Files
+import java.nio.file.Paths
+
+private fun decodeFromUtf8(bytes: ByteArray) = String(bytes)
 internal fun encodeToUtf8(str: String) = str.toByteArray()
+
+internal fun CPointer<ByteVar>.toKStringFromUtf8Impl(): String {
+    val nativeBytes = this
+
+    var length = 0
+    while (nativeBytes[length] != 0.toByte()) {
+        ++length
+    }
+
+    val bytes = ByteArray(length)
+    nativeMemUtils.getByteArray(nativeBytes.pointed, bytes, length)
+    return decodeFromUtf8(bytes)
+}
 
 fun bitsToFloat(bits: Int): Float = java.lang.Float.intBitsToFloat(bits)
 fun bitsToDouble(bits: Long): Double = java.lang.Double.longBitsToDouble(bits)
@@ -82,4 +100,23 @@ inline fun <reified R : Number> Long.narrow(): R = when (R::class.java) {
 
 inline fun <reified R : Number> Number.invalidNarrowing(): R {
     throw Error("unable to narrow ${this.javaClass.simpleName} \"${this}\" to ${R::class.java.simpleName}")
+}
+
+fun loadKonanLibrary(name: String) {
+    try {
+        System.loadLibrary(name)
+    } catch (e: UnsatisfiedLinkError) {
+        val fullLibraryName = System.mapLibraryName(name)
+        val dir = "${KonanHomeProvider.determineKonanHome()}/konan/nativelib"
+        try {
+            System.load("$dir/$fullLibraryName")
+        } catch (e: UnsatisfiedLinkError) {
+            val tempDir = Files.createTempDirectory(Paths.get(dir), null).toAbsolutePath().toString()
+            Files.createLink(Paths.get(tempDir, fullLibraryName), Paths.get(dir, fullLibraryName))
+            // TODO: Does not work on Windows. May be use FILE_FLAG_DELETE_ON_CLOSE?
+            File(tempDir).deleteOnExit()
+            File("$tempDir/$fullLibraryName").deleteOnExit()
+            System.load("$tempDir/$fullLibraryName")
+        }
+    }
 }

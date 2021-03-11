@@ -24,37 +24,55 @@ extern "C" {
 #endif
 
 // Returns current stacktrace as Array<String>.
-OBJ_GETTER0(GetCurrentStackTrace);
+OBJ_GETTER0(Kotlin_getCurrentStackTrace);
+
+OBJ_GETTER(GetStackTraceStrings, KConstRef stackTrace);
 
 // Throws arbitrary exception.
 void ThrowException(KRef exception);
 
+// RuntimeUtils.kt
+void OnUnhandledException(KRef throwable);
+
+RUNTIME_NORETURN void TerminateWithUnhandledException(KRef exception);
+
 void SetKonanTerminateHandler();
 
-// The functions below are implemented in Kotlin (at package konan.internal).
+RUNTIME_NOTHROW OBJ_GETTER(Kotlin_getExceptionObject, void* holder);
+
+// The functions below are implemented in Kotlin (at package kotlin.native.internal).
 
 // Throws null pointer exception. Context is evaluated from caller's address.
-void ThrowNullPointerException();
+void RUNTIME_NORETURN ThrowNullPointerException();
 // Throws array index out of bounds exception.
 // Context is evaluated from caller's address.
-void ThrowArrayIndexOutOfBoundsException();
+void RUNTIME_NORETURN ThrowArrayIndexOutOfBoundsException();
 // Throws class cast exception.
-void ThrowClassCastException();
+void RUNTIME_NORETURN ThrowClassCastException(const ObjHeader* instance, const TypeInfo* type_info);
 // Throws arithmetic exception.
-void ThrowArithmeticException();
+void RUNTIME_NORETURN ThrowArithmeticException();
 // Throws number format exception.
-void ThrowNumberFormatException();
+void RUNTIME_NORETURN ThrowNumberFormatException();
 // Throws out of memory error.
-void ThrowOutOfMemoryError();
+void RUNTIME_NORETURN ThrowOutOfMemoryError();
 // Throws not implemented error.
-void ThrowNotImplementedError();
-// Throws illegal character conversion exception (used in UTF8/UTF16 conversions).
-void ThrowIllegalCharacterConversionException();
-// Prints out mesage of Throwable.
+void RUNTIME_NORETURN ThrowNotImplementedError();
+// Throws character coding exception (used in UTF8/UTF16 conversions).
+void RUNTIME_NORETURN ThrowCharacterCodingException();
+void RUNTIME_NORETURN ThrowIllegalArgumentException();
+void RUNTIME_NORETURN ThrowIllegalStateException();
+void RUNTIME_NORETURN ThrowInvalidMutabilityException(KConstRef where);
+void RUNTIME_NORETURN ThrowIncorrectDereferenceException();
+void RUNTIME_NORETURN ThrowIllegalObjectSharingException(KConstNativePtr typeInfo, KConstNativePtr address);
+void RUNTIME_NORETURN ThrowFreezingException(KRef toFreeze, KRef blocker);
+// Prints out message of Throwable.
 void PrintThrowable(KRef);
 
 #ifdef __cplusplus
 } // extern "C"
 #endif
+
+// It's not always safe to extract SourceInfo during unhandled exception termination.
+void DisallowSourceInfo();
 
 #endif // RUNTIME_NAMES_H

@@ -16,98 +16,124 @@
 
 package org.jetbrains.kotlin.native.interop.tool
 
-import org.jetbrains.kotlin.cli.common.arguments.*
+import kotlinx.cli.ArgParser
+import kotlinx.cli.ArgType
+import kotlinx.cli.*
+import org.jetbrains.kotlin.native.interop.gen.jvm.GenerationMode
 
-open class CommonInteropArguments : CommonToolArguments() {
-    @Argument(value = "-flavor", valueDescription = "<flavor>", description = "One of: jvm, native")
-    var flavor: String? = null
+const val HEADER_FILTER_ADDITIONAL_SEARCH_PREFIX = "headerFilterAdditionalSearchPrefix"
+const val NODEFAULTLIBS_DEPRECATED = "nodefaultlibs"
+const val NODEFAULTLIBS = "no-default-libs"
+const val NOENDORSEDLIBS = "no-endorsed-libs"
+const val PURGE_USER_LIBS = "Xpurge-user-libs"
+const val TEMP_DIR = "Xtemporary-files-dir"
+const val NOPACK = "nopack"
+const val COMPILE_SOURCES = "Xcompile-source"
+const val SHORT_MODULE_NAME = "Xshort-module-name"
+const val FOREIGN_EXCEPTION_MODE = "Xforeign-exception-mode"
 
-    @Argument(value = "-pkg", valueDescription = "<fully qualified name>", description = "place generated bindings to the package")
-    var pkg: String? = null
+// TODO: unify camel and snake cases.
+// Possible solution is to accept both cases
+open class CommonInteropArguments(val argParser: ArgParser) {
+    val verbose by argParser.option(ArgType.Boolean, description = "Enable verbose logging output").default(false)
+    val pkg by argParser.option(ArgType.String, description = "place generated bindings to the package")
+    val output by argParser.option(ArgType.String, shortName = "o", description = "specifies the resulting library file")
+            .default("nativelib")
+    val libraryPath by argParser.option(ArgType.String,  description = "add a library search path")
+            .multiple().delimiter(",")
+    val staticLibrary by argParser.option(ArgType.String, description = "embed static library to the result")
+            .multiple().delimiter(",")
+    val library by argParser.option(ArgType.String, shortName = "l", description = "library to use for building")
+            .multiple()
+    val repo by argParser.option(ArgType.String, shortName = "r", description = "repository to resolve dependencies")
+            .multiple()
+    val mode by argParser.option(ArgType.Choice<GenerationMode>(), description = "the way interop library is generated")
+            .default(DEFAULT_MODE)
+    val nodefaultlibs by argParser.option(ArgType.Boolean, NODEFAULTLIBS,
+            description = "don't link the libraries from dist/klib automatically").default(false)
+    val nodefaultlibsDeprecated by argParser.option(ArgType.Boolean, NODEFAULTLIBS_DEPRECATED,
+            description = "don't link the libraries from dist/klib automatically",
+            deprecatedWarning = "Old form of flag. Please, use $NODEFAULTLIBS.").default(false)
+    val noendorsedlibs by argParser.option(ArgType.Boolean, NOENDORSEDLIBS,
+            description = "don't link the endorsed libraries from dist automatically").default(false)
+    val purgeUserLibs by argParser.option(ArgType.Boolean, PURGE_USER_LIBS,
+            description = "don't link unused libraries even explicitly specified").default(false)
+    val nopack by argParser.option(ArgType.Boolean, fullName = NOPACK,
+            description = "Don't pack the produced library into a klib file").default(false)
+    val tempDir by argParser.option(ArgType.String, TEMP_DIR,
+            description = "save temporary files to the given directory")
+    val kotlincOption by argParser.option(ArgType.String, "Xkotlinc-option",
+            description = "additional kotlinc compiler option").multiple()
 
-    @Argument(value = "-generated", valueDescription = "<dir>", description = "place generated bindings to the directory")
-    var generated: String? = null
+    companion object {
+        val DEFAULT_MODE = GenerationMode.METADATA
+    }
 }
 
-class CInteropArguments : CommonInteropArguments() {
-    @Argument(value = "-import", valueDescription = "<imports>", description = "a semicolon separated list of headers, prepended with the package name") 
-    var import: Array<String> = arrayOf()
+open class CInteropArguments(argParser: ArgParser =
+                                ArgParser("cinterop",
+                                        prefixStyle = ArgParser.OptionPrefixStyle.JVM)): CommonInteropArguments(argParser) {
+    val target by argParser.option(ArgType.String, description = "native target to compile to").default("host")
+    val def by argParser.option(ArgType.String, description = "the library definition file")
+    val header by argParser.option(ArgType.String, description = "header file to produce kotlin bindings for")
+            .multiple().delimiter(",")
+    val headerFilterPrefix by argParser.option(ArgType.String, HEADER_FILTER_ADDITIONAL_SEARCH_PREFIX, "hfasp",
+            "header file to produce kotlin bindings for").multiple().delimiter(",")
+    val compilerOpts by argParser.option(ArgType.String,
+            description = "additional compiler options (allows to add several options separated by spaces)",
+            deprecatedWarning = "-compilerOpts is deprecated. Please use -compiler-options.")
+            .multiple().delimiter(" ")
+    val compilerOptions by argParser.option(ArgType.String, "compiler-options",
+            description = "additional compiler options (allows to add several options separated by spaces)")
+            .multiple().delimiter(" ")
+    val linkerOpts = argParser.option(ArgType.String, "linkerOpts",
+            description = "additional linker options (allows to add several options separated by spaces)",
+            deprecatedWarning = "-linkerOpts is deprecated. Please use -linker-options.")
+            .multiple().delimiter(" ")
+    val linkerOptions = argParser.option(ArgType.String, "linker-options",
+            description = "additional linker options (allows to add several options separated by spaces)")
+            .multiple().delimiter(" ")
+    val compilerOption by argParser.option(ArgType.String, "compiler-option",
+            description = "additional compiler option").multiple()
+    val linkerOption = argParser.option(ArgType.String, "linker-option",
+            description = "additional linker option").multiple()
+    val linker by argParser.option(ArgType.String, description = "use specified linker")
 
-    @Argument(value = "-target", valueDescription = "<target>", description = "native target to compile to") 
-    var target: String? = null
+    val compileSource by argParser.option(ArgType.String,
+            fullName = COMPILE_SOURCES,
+            description = "additional C/C++ sources to be compiled into resulting library"
+    ).multiple()
 
-    @Argument(value = "-natives", valueDescription = "<directory>", description = "where to put the built native files") 
-    var natives: String? = null
+    val sourceCompileOptions by argParser.option(ArgType.String,
+            fullName = "Xsource-compiler-option",
+            description = "compiler options for sources provided via -$COMPILE_SOURCES"
+    ).multiple()
 
-    @Argument(value = "-def", valueDescription = "<file>", description = "the library definition file") 
-    var def: String? = null
+    val shortModuleName by argParser.option(ArgType.String,
+            fullName = SHORT_MODULE_NAME,
+            description = "A short name used to denote this library in the IDE"
+    )
 
-    @Argument(value = "-manifest", valueDescription = "<file>", description = "library manifest addend") 
-    var manifest: String? = null
+    val moduleName by argParser.option(ArgType.String,
+            fullName = "Xmodule-name",
+            description = "A full name of the library used for dependency resolution"
+    )
 
-    @Argument(value = "-properties", valueDescription = "<file>", description = "an alternative location of konan.properties file") 
-    var properties: String? = null
-
-    // TODO: the short -h for -header conflicts with -h for -help.
-    // The -header currently wins, but need to make it a little more sound.
-    @Argument(value = "-header", shortName = "-h",  valueDescription = "<file>", description = "header file to produce kotlin bindings for") 
-    var header: Array<String> = arrayOf()
-
-    @Argument(value = HEADER_FILTER_ADDITIONAL_SEARCH_PREFIX, shortName = "-hfasp",  valueDescription = "<file>", description = "header file to produce kotlin bindings for") 
-    var headerFilterPrefix: Array<String> = arrayOf()
-
-    @Argument(value = "-compilerOpts", shortName = "-copt", valueDescription = "<arg>", description = "additional compiler options") 
-    var compilerOpts: Array<String> = arrayOf()
-
-    @Argument(value = "-linkerOpts", shortName = "-lopt", valueDescription = "<arg>", description = "additional linker options") 
-    var linkerOpts: Array<String> = arrayOf()
-
-    @Argument(value = "-shims", description = "wrap bindings by a tracing layer") 
-    var shims: Boolean = false
-
-    @Argument(value = "-linker", valueDescription = "<file>", description = "use specified linker") 
-    var linker: String? = null
-
-    @Argument(value = "-staticLibrary", valueDescription = "<file>", description = "embed static library to the result") 
-    var staticLibrary: Array<String> = arrayOf()
-
-    @Argument(value = "-libraryPath", valueDescription = "<dir>", description = "add a library search path") 
-    var libraryPath: Array<String> = arrayOf()
-
-    @Argument(value = "-cstubsname", valueDescription = "<name>", description = "provide a name for the generated c stubs file") 
-    var cstubsname: String? = null
-
-    @Argument(value = "-keepcstubs", description = "preserve the generated c stubs for inspection") 
-    var keepcstubs: Boolean = false
+    val foreignExceptionMode by argParser.option(ArgType.String, FOREIGN_EXCEPTION_MODE,
+            description = "Handle native exception in Kotlin: <terminate|objc-wrap>")
 }
 
-const val HEADER_FILTER_ADDITIONAL_SEARCH_PREFIX = "-headerFilterAdditionalSearchPrefix"
+class JSInteropArguments(argParser: ArgParser = ArgParser("jsinterop",
+        prefixStyle = ArgParser.OptionPrefixStyle.JVM)): CommonInteropArguments(argParser) {
+    enum class TargetType {
+        WASM32;
 
-fun <T: CommonToolArguments> parseCommandLine(args: Array<String>, arguments: T): T {
-    parseCommandLineArguments(args.asList(), arguments)
-    reportArgumentParseProblems(arguments.errors)
-    return arguments
+        override fun toString() = name.toLowerCase()
+    }
+    val target by argParser.option(ArgType.Choice<TargetType>(),
+            description = "wasm target to compile to").default(TargetType.WASM32)
 }
-
-// Integrate with CLITool from the big Kotlin and get rid of the mess below.
 
 internal fun warn(msg: String) {
     println("warning: $msg")
-}
-
-// This is a copy of CLITool.kt's function adapted to work without a collector.
-private fun reportArgumentParseProblems(errors: ArgumentParseErrors) {
-    for (flag in errors.unknownExtraFlags) {
-        warn("Flag is not supported by this version of the compiler: $flag")
-    }
-    for (argument in errors.extraArgumentsPassedInObsoleteForm) {
-        warn("Advanced option value is passed in an obsolete form. Please use the '=' character " +
-                "to specify the value: $argument=...")
-    }
-    for ((key, value) in errors.duplicateArguments) {
-        warn("Argument $key is passed multiple times. Only the last value will be used: $value")
-    }
-    for ((deprecatedName, newName) in errors.deprecatedArguments) {
-        warn("Argument $deprecatedName is deprecated. Please use $newName instead")
-    }
 }

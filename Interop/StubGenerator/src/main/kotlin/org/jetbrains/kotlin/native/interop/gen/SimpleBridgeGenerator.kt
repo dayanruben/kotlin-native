@@ -24,8 +24,13 @@ enum class BridgedType(val kotlinType: KotlinClassifierType, val convertor: Stri
     SHORT(KotlinTypes.short, "toShort"),
     INT(KotlinTypes.int, "toInt"),
     LONG(KotlinTypes.long, "toLong"),
+    UBYTE(KotlinTypes.uByte, "toUByte"),
+    USHORT(KotlinTypes.uShort, "toUShort"),
+    UINT(KotlinTypes.uInt, "toUInt"),
+    ULONG(KotlinTypes.uLong, "toULong"),
     FLOAT(KotlinTypes.float, "toFloat"),
     DOUBLE(KotlinTypes.double, "toDouble"),
+    VECTOR128(KotlinTypes.vector128),
     NATIVE_PTR(KotlinTypes.nativePtr),
     OBJC_POINTER(KotlinTypes.nativePtr),
     VOID(KotlinTypes.unit)
@@ -56,6 +61,7 @@ interface SimpleBridgeGenerator {
             nativeBacked: NativeBacked,
             returnType: BridgedType,
             kotlinValues: List<BridgeTypedKotlinValue>,
+            independent: Boolean,
             block: NativeCodeBuilder.(nativeValues: List<NativeExpression>) -> NativeExpression
     ): KotlinExpression
 

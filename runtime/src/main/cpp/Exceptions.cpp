@@ -19,6 +19,7 @@
 #include <stdint.h>
 
 #include <exception>
+#include <unistd.h>
 
 #if KONAN_NO_EXCEPTIONS
 #define OMIT_BACKTRACE 1
@@ -33,44 +34,34 @@
 #endif
 #endif // OMIT_BACKTRACE
 
-#include "Assert.h"
+#include "KAssert.h"
 #include "Exceptions.h"
 #include "ExecFormat.h"
 #include "Memory.h"
+#include "Mutex.hpp"
 #include "Natives.h"
 #include "KString.h"
+#include "SourceInfo.h"
 #include "Types.h"
-#include "Utils.h"
+#include "Utils.hpp"
+#include "ObjCExceptions.h"
 
 namespace {
-
-// TODO: it seems to be very common case; does C++ std library provide something like this?
-class AutoFree {
- private:
-  void* mem_;
-
- public:
-  AutoFree(void* mem): mem_(mem) {}
-
-  ~AutoFree() {
-    konan::free(mem_);
-  }
-};
 
 #if USE_GCC_UNWIND
 struct Backtrace {
   Backtrace(int count, int skip) : index(0), skipCount(skip) {
-    auto result = AllocArrayInstance(
-        theArrayTypeInfo, count - skipCount, arrayHolder.slot());
+    uint32_t size = count - skipCount;
+    if (size < 0) {
+      size = 0;
+    }
+    auto result = AllocArrayInstance(theNativePtrArrayTypeInfo, size, arrayHolder.slot());
     // TODO: throw cached OOME?
-    RuntimeAssert(result != nullptr, "Cannot create backtrace array");
+    RuntimeCheck(result != nullptr, "Cannot create backtrace array");
   }
 
-  void setNextElement(const char* element) {
-    auto result = CreateStringFromCString(
-      element, ArrayAddressOfElementAt(obj()->array(), index++));
-    // TODO: throw cached OOME?
-    RuntimeAssert(result != nullptr, "Cannot create backtrace array element");
+  void setNextElement(_Unwind_Ptr element) {
+    Kotlin_NativePtrArray_set(obj(), index++, (KNativePtr) element);
   }
 
   ObjHeader* obj() { return arrayHolder.obj(); }
@@ -100,66 +91,113 @@ _Unwind_Reason_Code unwindCallback(
 #else
   _Unwind_Ptr address = _Unwind_GetIP(context);
 #endif
+  backtrace->setNextElement(address);
 
-  char symbol[512];
-  if (!AddressToSymbol((const void*)address, symbol, sizeof(symbol))) {
-    // Make empty string:
-    symbol[0] = '\0';
-  }
-
-  char line[512];
-  konan::snprintf(line, sizeof(line) - 1, "%s (%p)",
-    symbol, (void*)(intptr_t)address);
-  backtrace->setNextElement(line);
   return _URC_NO_REASON;
+}
+#endif
+
+THREAD_LOCAL_VARIABLE bool disallowSourceInfo = false;
+
+#if !OMIT_BACKTRACE && !USE_GCC_UNWIND
+SourceInfo getSourceInfo(KConstRef stackTrace, int index) {
+  return disallowSourceInfo
+      ? SourceInfo { .fileName = nullptr, .lineNumber = -1, .column = -1 }
+      : Kotlin_getSourceInfo(*PrimitiveArrayAddressOfElementAt<KNativePtr>(stackTrace->array(), index));
 }
 #endif
 
 }  // namespace
 
-#ifdef __cplusplus
-extern "C" {
-#endif
-
 // TODO: this implementation is just a hack, e.g. the result is inexact;
 // however it is better to have an inexact stacktrace than not to have any.
-OBJ_GETTER0(GetCurrentStackTrace) {
+NO_INLINE OBJ_GETTER0(Kotlin_getCurrentStackTrace) {
 #if OMIT_BACKTRACE
-  ObjHeader* result = AllocArrayInstance(theArrayTypeInfo, 1, OBJ_RESULT);
-  ArrayHeader* array = result->array();
-  CreateStringFromCString("<UNIMPLEMENTED>", ArrayAddressOfElementAt(array, 0));
-  return result;
+  return AllocArrayInstance(theNativePtrArrayTypeInfo, 0, OBJ_RESULT);
 #else
-  // Skips first 3 elements as irrelevant.
-  constexpr int kSkipFrames = 3;
+  // Skips first 2 elements as irrelevant: this function and primary Throwable constructor.
+  constexpr int kSkipFrames = 2;
 #if USE_GCC_UNWIND
   int depth = 0;
   _Unwind_Backtrace(depthCountCallback, &depth);
-  if (depth < kSkipFrames)
-      return AllocArrayInstance(theArrayTypeInfo, 0, OBJ_RESULT);
   Backtrace result(depth, kSkipFrames);
-  _Unwind_Backtrace(unwindCallback, &result);
+  if (result.obj()->array()->count_ > 0) {
+    _Unwind_Backtrace(unwindCallback, &result);
+  }
   RETURN_OBJ(result.obj());
 #else
   const int maxSize = 32;
   void* buffer[maxSize];
 
   int size = backtrace(buffer, maxSize);
-  char** symbols = backtrace_symbols(buffer, size);
-  RuntimeAssert(symbols != nullptr, "Not enough memory to retrieve the stacktrace");
   if (size < kSkipFrames)
-      return AllocArrayInstance(theArrayTypeInfo, 0, OBJ_RESULT);
-  AutoFree autoFree(symbols);
+    return AllocArrayInstance(theNativePtrArrayTypeInfo, 0, OBJ_RESULT);
+
   ObjHolder resultHolder;
-  ObjHeader* result = AllocArrayInstance(
-      theArrayTypeInfo, size - kSkipFrames, resultHolder.slot());
-  ArrayHeader* array = result->array();
+  ObjHeader* result = AllocArrayInstance(theNativePtrArrayTypeInfo, size - kSkipFrames, resultHolder.slot());
   for (int index = kSkipFrames; index < size; ++index) {
-    CreateStringFromCString(
-      symbols[index], ArrayAddressOfElementAt(array, index - kSkipFrames));
+    Kotlin_NativePtrArray_set(result, index - kSkipFrames, buffer[index]);
   }
   RETURN_OBJ(result);
 #endif
+#endif  // !OMIT_BACKTRACE
+}
+
+OBJ_GETTER(GetStackTraceStrings, KConstRef stackTrace) {
+#if OMIT_BACKTRACE
+  ObjHeader* result = AllocArrayInstance(theArrayTypeInfo, 1, OBJ_RESULT);
+  ObjHolder holder;
+  CreateStringFromCString("<UNIMPLEMENTED>", holder.slot());
+  UpdateHeapRef(ArrayAddressOfElementAt(result->array(), 0), holder.obj());
+  return result;
+#else
+  uint32_t size = stackTrace->array()->count_;
+  ObjHolder resultHolder;
+  ObjHeader* strings = AllocArrayInstance(theArrayTypeInfo, size, resultHolder.slot());
+#if USE_GCC_UNWIND
+  for (uint32_t index = 0; index < size; ++index) {
+    KNativePtr address = Kotlin_NativePtrArray_get(stackTrace, index);
+    char symbol[512];
+    if (!AddressToSymbol((const void*) address, symbol, sizeof(symbol))) {
+      // Make empty string:
+      symbol[0] = '\0';
+    }
+    char line[512];
+    konan::snprintf(line, sizeof(line) - 1, "%s (%p)", symbol, (void*)(intptr_t)address);
+    ObjHolder holder;
+    CreateStringFromCString(line, holder.slot());
+    UpdateHeapRef(ArrayAddressOfElementAt(strings->array(), index), holder.obj());
+  }
+#else
+  if (size > 0) {
+    char **symbols = backtrace_symbols(PrimitiveArrayAddressOfElementAt<KNativePtr>(stackTrace->array(), 0), size);
+    RuntimeCheck(symbols != nullptr, "Not enough memory to retrieve the stacktrace");
+
+    for (uint32_t index = 0; index < size; ++index) {
+      auto sourceInfo = getSourceInfo(stackTrace, index);
+      const char* symbol = symbols[index];
+      const char* result;
+      char line[1024];
+      if (sourceInfo.fileName != nullptr) {
+        if (sourceInfo.lineNumber != -1) {
+          konan::snprintf(line, sizeof(line) - 1, "%s (%s:%d:%d)",
+                          symbol, sourceInfo.fileName, sourceInfo.lineNumber, sourceInfo.column);
+        } else {
+          konan::snprintf(line, sizeof(line) - 1, "%s (%s:<unknown>)", symbol, sourceInfo.fileName);
+        }
+        result = line;
+      } else {
+        result = symbol;
+      }
+      ObjHolder holder;
+      CreateStringFromCString(result, holder.slot());
+      UpdateHeapRef(ArrayAddressOfElementAt(strings->array(), index), holder.obj());
+    }
+    // Not konan::free. Used to free memory allocated in backtrace_symbols where malloc is used.
+    free(symbols);
+  }
+#endif
+  RETURN_OBJ(strings);
 #endif  // !OMIT_BACKTRACE
 }
 
@@ -168,57 +206,122 @@ void ThrowException(KRef exception) {
                 "Throwing something non-throwable");
 #if KONAN_NO_EXCEPTIONS
   PrintThrowable(exception);
-  RuntimeAssert(false, "Exceptions unsupported");
+  RuntimeCheck(false, "Exceptions unsupported");
 #else
-  throw ObjHolder(exception);
+  ExceptionObjHolder::Throw(exception);
 #endif
 }
 
-#if KONAN_OBJC_INTEROP
+namespace {
 
-void ReportUnhandledException(KRef e);
-
-static void (*oldTerminateHandler)() = nullptr;
-
-static void KonanTerminateHandler() {
-  auto currentException = std::current_exception();
-  if (!currentException) {
-    // No current exception.
-    oldTerminateHandler();
-  } else {
-    try {
-      std::rethrow_exception(currentException);
-    } catch (ObjHolder& e) {
-      ReportUnhandledException(e.obj());
-      konan::abort();
-    } catch (...) {
-      // Not a Kotlin exception.
-      oldTerminateHandler();
+class {
+    /**
+     * Timeout 5 sec for concurrent (second) terminate attempt to give a chance the first one to finish.
+     * If the terminate handler hangs for 5 sec it is probably fatally broken, so let's do abnormal _Exit in that case.
+     */
+    unsigned int timeoutSec = 5;
+    int terminatingFlag = 0;
+  public:
+    template <class Fun> RUNTIME_NORETURN void operator()(Fun block) {
+      if (compareAndSet(&terminatingFlag, 0, 1)) {
+        block();
+        // block() is supposed to be NORETURN, otherwise go to normal abort()
+        konan::abort();
+      } else {
+        sleep(timeoutSec);
+        // We come here when another terminate handler hangs for 5 sec, that looks fatally broken. Go to forced exit now.
+      }
+      _Exit(EXIT_FAILURE); // force exit
     }
+} concurrentTerminateWrapper;
+
+//! Process exception hook (if any) or just printStackTrace + write crash log
+void processUnhandledKotlinException(KRef throwable) {
+  OnUnhandledException(throwable);
+#if KONAN_REPORT_BACKTRACE_TO_IOS_CRASH_LOG
+  ReportBacktraceToIosCrashLog(throwable);
+#endif
+}
+
+} // namespace
+
+RUNTIME_NORETURN void TerminateWithUnhandledException(KRef throwable) {
+  concurrentTerminateWrapper([=]() {
+      processUnhandledKotlinException(throwable);
+    konan::abort();
+  });
+}
+
+ALWAYS_INLINE RUNTIME_NOTHROW OBJ_GETTER(Kotlin_getExceptionObject, void* holder) {
+#if !KONAN_NO_EXCEPTIONS
+    RETURN_OBJ(static_cast<ExceptionObjHolder*>(holder)->GetExceptionObject());
+#else
+    RETURN_OBJ(nullptr);
+#endif
+}
+
+#if !KONAN_NO_EXCEPTIONS
+
+namespace {
+// Copy, move and assign would be safe, but not much useful, so let's delete all (rule of 5)
+class TerminateHandler : private kotlin::Pinned {
+
+  // In fact, it's safe to call my_handler directly from outside: it will do the job and then invoke original handler,
+  // even if it has not been initialized yet. So one may want to make it public and/or not the class member
+  RUNTIME_NORETURN static void kotlinHandler() {
+    concurrentTerminateWrapper([]() {
+      if (auto currentException = std::current_exception()) {
+        try {
+          std::rethrow_exception(currentException);
+        } catch (ExceptionObjHolder& e) {
+          processUnhandledKotlinException(e.GetExceptionObject());
+          konan::abort();
+        } catch (...) {
+          // Not a Kotlin exception - call default handler
+          instance().queuedHandler_();
+        }
+      }
+      // Come here in case of direct terminate() call or unknown exception - go to default terminate handler.
+      instance().queuedHandler_();
+    });
   }
-}
 
-static SimpleMutex konanTerminateHandlerInitializationMutex;
+  using QH = __attribute__((noreturn)) void(*)();
+  QH queuedHandler_;
 
+  /// Use machinery like Meyers singleton to provide thread safety
+  TerminateHandler()
+    : queuedHandler_((QH)std::set_terminate(kotlinHandler)) {}
+
+  static TerminateHandler& instance() {
+    static TerminateHandler singleton [[clang::no_destroy]];
+    return singleton;
+  }
+
+  // Dtor might be in use to restore original handler. However, consequent install
+  // will not reconstruct handler anyway, so let's keep dtor deleted to avoid confusion.
+  ~TerminateHandler() = delete;
+public:
+  /// First call will do the job, all consequent will do nothing.
+  static void install() {
+    instance(); // Use side effect of warming up
+  }
+};
+} // anon namespace
+
+// Use one public function to limit access to the class declaration
 void SetKonanTerminateHandler() {
-  if (oldTerminateHandler != nullptr) return; // Already initialized.
-
-  LockGuard<SimpleMutex> lockGuard(konanTerminateHandlerInitializationMutex);
-
-  if (oldTerminateHandler != nullptr) return; // Already initialized.
-
-  oldTerminateHandler = std::get_terminate(); // If termination happens between `set_terminate` and assignment.
-  oldTerminateHandler = std::set_terminate(&KonanTerminateHandler);
+  TerminateHandler::install();
 }
 
-#else // KONAN_OBJC_INTEROP
+#else // !KONAN_NO_EXCEPTIONS
 
 void SetKonanTerminateHandler() {
   // Nothing to do.
 }
 
-#endif // KONAN_OBJC_INTEROP
+#endif // !KONAN_NO_EXCEPTIONS
 
-#ifdef __cplusplus
-} // extern "C"
-#endif
+void DisallowSourceInfo() {
+  disallowSourceInfo = true;
+}

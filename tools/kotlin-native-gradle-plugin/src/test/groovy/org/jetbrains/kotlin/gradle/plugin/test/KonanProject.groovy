@@ -1,8 +1,24 @@
+/*
+ * Copyright 2010-2018 JetBrains s.r.o.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 package org.jetbrains.kotlin.gradle.plugin.test
 
 import org.gradle.testkit.runner.GradleRunner
-import org.jetbrains.kotlin.konan.target.CompilerOutputKind
-import org.jetbrains.kotlin.konan.target.TargetManager
+import org.gradle.util.GradleVersion
+import org.jetbrains.kotlin.konan.target.HostManager
 
 import java.nio.file.Files
 import java.nio.file.Path
@@ -12,7 +28,10 @@ enum ArtifactType {
     PROGRAM("program"),
     LIBRARY("library"),
     BITCODE("bitcode"),
-    INTEROP("interop")
+    INTEROP("interop"),
+    DYNAMIC("dynamic"),
+    STATIC("static"),
+    FRAMEWORK("framework")
 
     String type
     ArtifactType(String type) { this.type = type }
@@ -24,13 +43,14 @@ class KonanProject {
     static String DEFAULT_ARTIFACT_NAME = 'main'
     static String DEFAULT_INTEROP_NAME = "stdio"
 
-    static String HOST = TargetManager.hostName
+    static String HOST = HostManager.hostName
 
     File projectDir
     Path projectPath
     File konanBuildDir
 
     String konanHome
+    String gradleVersion
 
     File         buildFile
     File         propertiesFile
@@ -67,20 +87,21 @@ class KonanProject {
         this.targets = targets
         projectPath = projectDir.toPath()
         konanBuildDir = projectPath.resolve('build/konan').toFile()
-        def konanHome = System.getProperty("konan.home")
-        if (konanHome == null) {
-            throw new IllegalStateException("konan.home isn't specified")
-        }
-        def konanHomeDir = new File(konanHome)
+        def konanHomeDir = new File(getKonanHome())
         if (!konanHomeDir.exists() || !konanHomeDir.directory) {
             throw new IllegalStateException("konan.home doesn't exist or is not a directory: $konanHomeDir.canonicalPath")
         }
         // Escape windows path separator
-        this.konanHome = konanHomeDir.canonicalPath.replace('\\', '\\\\')
+        this.konanHome = escapeBackSlashes(konanHomeDir.canonicalPath)
+        this.gradleVersion = System.getProperty("gradleVersion") ?: GradleVersion.current().version
     }
 
     GradleRunner createRunner(boolean withDebug = true) {
-        return GradleRunner.create().withProjectDir(projectDir).withPluginClasspath().withDebug(withDebug)
+        return GradleRunner.create()
+                .withProjectDir(projectDir)
+                .withPluginClasspath()
+                .withDebug(withDebug)
+                .withGradleVersion(gradleVersion)
     }
 
     /** Creates a subdirectory specified by the given path. */
@@ -196,10 +217,9 @@ class KonanProject {
     /** Generates gradle.properties file with the konan.home and konan.jvmArgs properties set. */
     File generatePropertiesFile(String konanHome, String konanJvmArgs = System.getProperty("konan.jvmArgs") ?: "") {
         propertiesFile = createFile(projectPath, "gradle.properties", """\
-            konan.home=$konanHome
+            org.jetbrains.kotlin.native.home=$konanHome
             ${!konanJvmArgs.isEmpty() ? "konan.jvmArgs=$konanJvmArgs\n" : ""}
         """.stripIndent())
-        println(propertiesFile.text)
         return propertiesFile
     }
 
@@ -220,7 +240,7 @@ class KonanProject {
      *  $container.$section.$parameter ${value.canonicalPath.replace(\, \\)}
      */
     protected void addSetting(String container, String section, String parameter, File value) {
-        addSetting(container, section, parameter, "'${value.canonicalPath.replace('\\', '\\\\')}'")
+        addSetting(container, section, parameter, "'${escapeBackSlashes(value.canonicalPath)}'")
     }
 
     /** Sets the given setting of the given konanArtifact */
@@ -340,6 +360,18 @@ class KonanProject {
         def result = createEmpty(projectDir, targets)
         config(result)
         return result
+    }
+
+    static String escapeBackSlashes(String value) {
+        return value.replace('\\', '\\\\')
+    }
+
+    static String getKonanHome() {
+        def konanHome = System.getProperty("konan.home") ?: System.getProperty("org.jetbrains.kotlin.native.home")
+        if (konanHome == null) {
+            throw new IllegalStateException("konan.home isn't specified")
+        }
+        return konanHome
     }
 
 }

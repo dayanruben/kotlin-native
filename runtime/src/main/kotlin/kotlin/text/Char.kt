@@ -1,17 +1,6 @@
 /*
- * Copyright 2010-2017 JetBrains s.r.o.
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Copyright 2010-2018 JetBrains s.r.o. Use of this source code is governed by the Apache 2.0 license
+ * that can be found in the LICENSE file.
  */
 
 package kotlin.text
@@ -20,27 +9,69 @@ import kotlin.IllegalArgumentException
 
 /**
  * Returns `true` if this character (Unicode code point) is defined in Unicode.
+ *
+ * A character is considered to be defined in Unicode if its [category] is not [CharCategory.UNASSIGNED].
  */
-@SymbolName("Kotlin_Char_isDefined")
-external public fun Char.isDefined(): Boolean
+public actual fun Char.isDefined(): Boolean {
+    if (this < '\u0080') {
+        return true
+    }
+    return getCategoryValue() != CharCategory.UNASSIGNED.value
+}
 
 /**
  * Returns `true` if this character is a letter.
+ *
+ * A character is considered to be a letter if its [category] is [CharCategory.UPPERCASE_LETTER],
+ * [CharCategory.LOWERCASE_LETTER], [CharCategory.TITLECASE_LETTER], [CharCategory.MODIFIER_LETTER], or [CharCategory.OTHER_LETTER].
+ *
+ * @sample samples.text.Chars.isLetter
  */
-@SymbolName("Kotlin_Char_isLetter")
-external public fun Char.isLetter(): Boolean
+public actual fun Char.isLetter(): Boolean {
+    if (this in 'a'..'z' || this in 'A'..'Z') {
+        return true
+    }
+    if (this < '\u0080') {
+        return false
+    }
+    return isLetterImpl()
+}
 
 /**
  * Returns `true` if this character is a letter or digit.
+ *
+ * @see isLetter
+ * @see isDigit
+ *
+ * @sample samples.text.Chars.isLetterOrDigit
  */
-@SymbolName("Kotlin_Char_isLetterOrDigit")
-external public fun Char.isLetterOrDigit(): Boolean
+public actual fun Char.isLetterOrDigit(): Boolean {
+    if (this in 'a'..'z' || this in 'A'..'Z' || this in '0'..'9') {
+        return true
+    }
+    if (this < '\u0080') {
+        return false
+    }
+
+    return isDigit() || isLetter()
+}
 
 /**
- * Returns `true` if this character (Unicode code point) is a digit.
+ * Returns `true` if this character is a digit.
+ *
+ * A character is considered to be a digit if its [category] is [CharCategory.DECIMAL_DIGIT_NUMBER].
+ *
+ * @sample samples.text.Chars.isDigit
  */
-@SymbolName("Kotlin_Char_isDigit")
-external public fun Char.isDigit(): Boolean
+public actual fun Char.isDigit(): Boolean {
+    if (this in '0'..'9') {
+        return true
+    }
+    if (this < '\u0080') {
+        return false
+    }
+    return isDigitImpl()
+}
 
 /**
  * Returns `true` if this character (Unicode code point) should be regarded as an ignorable
@@ -51,73 +82,175 @@ external public fun Char.isIdentifierIgnorable(): Boolean
 
 /**
  * Returns `true` if this character is an ISO control character.
+ *
+ * A character is considered to be an ISO control character if its code is in the range `'\u0000'..'\u001F'` or in the range `'\u007F'..'\u009F'`.
+ *
+ * @sample samples.text.Chars.isISOControl
  */
 @SymbolName("Kotlin_Char_isISOControl")
-external public fun Char.isISOControl(): Boolean
+external public actual fun Char.isISOControl(): Boolean
 
 /**
  * Determines whether a character is whitespace according to the Unicode standard.
  * Returns `true` if the character is whitespace.
+ *
+ * @sample samples.text.Chars.isWhitespace
  */
-@SymbolName("Kotlin_Char_isWhitespace")
-external public fun Char.isWhitespace(): Boolean
+public actual fun Char.isWhitespace(): Boolean = isWhitespaceImpl()
 
 /**
- * Returns `true` if this character is upper case.
+ * Returns `true` if this character is an upper case letter.
+ *
+ * A character is considered to be an upper case letter if its [category] is [CharCategory.UPPERCASE_LETTER].
+ *
+ * @sample samples.text.Chars.isUpperCase
  */
-@SymbolName("Kotlin_Char_isUpperCase")
-external public fun Char.isUpperCase(): Boolean
+public actual fun Char.isUpperCase(): Boolean {
+    if (this in 'A'..'Z') {
+        return true
+    }
+    if (this < '\u0080') {
+        return false
+    }
+    return isUpperCaseImpl()
+}
 
 /**
- * Returns `true` if this character is lower case.
+ * Returns `true` if this character is a lower case letter.
+ *
+ * A character is considered to be a lower case letter if its [category] is [CharCategory.LOWERCASE_LETTER].
+ *
+ * @sample samples.text.Chars.isLowerCase
  */
-@SymbolName("Kotlin_Char_isLowerCase")
-external public fun Char.isLowerCase(): Boolean
+public actual fun Char.isLowerCase(): Boolean {
+    if (this in 'a'..'z') {
+        return true
+    }
+    if (this < '\u0080') {
+        return false
+    }
+    return isLowerCaseImpl()
+}
 
 /**
- * Converts this character to uppercase.
+ * Returns `true` if this character is a title case letter.
+ *
+ * A character is considered to be a title case letter if its [category] is [CharCategory.TITLECASE_LETTER].
+ *
+ * @sample samples.text.Chars.isTitleCase
  */
-@SymbolName("Kotlin_Char_toUpperCase")
-external public fun Char.toUpperCase(): Char
+public actual fun Char.isTitleCase(): Boolean {
+    if (this < '\u0080') {
+        return false
+    }
+    return getCategoryValue() == CharCategory.TITLECASE_LETTER.value
+}
 
 /**
- * Converts this character to lowercase.
+ * Converts this character to upper case using Unicode mapping rules of the invariant locale.
  */
-@SymbolName("Kotlin_Char_toLowerCase")
-external public fun Char.toLowerCase(): Char
+public actual fun Char.toUpperCase(): Char = uppercaseCharImpl()
+
+/**
+ * Converts this character to upper case using Unicode mapping rules of the invariant locale.
+ *
+ * This function performs one-to-one character mapping.
+ * To support one-to-many character mapping use the [uppercase] function.
+ * If this character has no mapping equivalent, the character itself is returned.
+ *
+ * @sample samples.text.Chars.uppercase
+ */
+@SinceKotlin("1.4")
+@ExperimentalStdlibApi
+public actual fun Char.uppercaseChar(): Char = uppercaseCharImpl()
+
+/**
+ * Converts this character to upper case using Unicode mapping rules of the invariant locale.
+ *
+ * This function supports one-to-many character mapping, thus the length of the returned string can be greater than one.
+ * For example, `'\uFB00'.uppercase()` returns `"\u0046\u0046"`,
+ * where `'\uFB00'` is the LATIN SMALL LIGATURE FF character (`ﬀ`).
+ * If this character has no upper case mapping, the result of `toString()` of this char is returned.
+ *
+ * @sample samples.text.Chars.uppercase
+ */
+@SinceKotlin("1.4")
+@ExperimentalStdlibApi
+public actual fun Char.uppercase(): String = uppercaseImpl()
+
+/**
+ * Converts this character to lower case using Unicode mapping rules of the invariant locale.
+ */
+public actual fun Char.toLowerCase(): Char = lowercaseCharImpl()
+
+/**
+ * Converts this character to lower case using Unicode mapping rules of the invariant locale.
+ *
+ * This function performs one-to-one character mapping.
+ * To support one-to-many character mapping use the [lowercase] function.
+ * If this character has no mapping equivalent, the character itself is returned.
+ *
+ * @sample samples.text.Chars.lowercase
+ */
+@SinceKotlin("1.4")
+@ExperimentalStdlibApi
+public actual fun Char.lowercaseChar(): Char = lowercaseCharImpl()
+
+/**
+ * Converts this character to lower case using Unicode mapping rules of the invariant locale.
+ *
+ * This function supports one-to-many character mapping, thus the length of the returned string can be greater than one.
+ * For example, `'\u0130'.lowercase()` returns `"\u0069\u0307"`,
+ * where `'\u0130'` is the LATIN CAPITAL LETTER I WITH DOT ABOVE character (`İ`).
+ * If this character has no lower case mapping, the result of `toString()` of this char is returned.
+ *
+ * @sample samples.text.Chars.lowercase
+ */
+@SinceKotlin("1.4")
+@ExperimentalStdlibApi
+public actual fun Char.lowercase(): String = lowercaseImpl()
+
+/**
+ * Converts this character to title case using Unicode mapping rules of the invariant locale.
+ *
+ * This function performs one-to-one character mapping.
+ * To support one-to-many character mapping use the [titlecase] function.
+ * If this character has no mapping equivalent, the result of calling [uppercaseChar] is returned.
+ *
+ * @sample samples.text.Chars.titlecase
+ */
+@SinceKotlin("1.4")
+public actual fun Char.titlecaseChar(): Char = titlecaseCharImpl()
 
 /**
  * Returns `true` if this character is a Unicode high-surrogate code unit (also known as leading-surrogate code unit).
  */
 @SymbolName("Kotlin_Char_isHighSurrogate")
-external public fun Char.isHighSurrogate(): Boolean
+external public actual fun Char.isHighSurrogate(): Boolean
 
 /**
  * Returns `true` if this character is a Unicode low-surrogate code unit (also known as trailing-surrogate code unit).
  */
 @SymbolName("Kotlin_Char_isLowSurrogate")
-external public fun Char.isLowSurrogate(): Boolean
+external public actual fun Char.isLowSurrogate(): Boolean
 
 
-internal fun digitOf(char: Char, radix: Int): Int = digitOfChecked(char, checkRadix(radix))
+internal actual fun digitOf(char: Char, radix: Int): Int = digitOfChecked(char, checkRadix(radix))
 
 @SymbolName("Kotlin_Char_digitOfChecked")
 external internal fun digitOfChecked(char: Char, radix: Int): Int
 
 /**
- * Returns a value indicating a character's general category.
+ * Returns the Unicode general category of this character.
  */
-public val Char.category: CharCategory get() = CharCategory.valueOf(getType())
-
-/** Retrun a Unicode category of the character as an Int. */
-@SymbolName("Kotlin_Char_getType")
-external internal fun Char.getType(): Int
+public actual val Char.category: CharCategory
+    get() = CharCategory.valueOf(getCategoryValue())
 
 /**
  * Checks whether the given [radix] is valid radix for string to number and number to string conversion.
  */
 @PublishedApi
-internal fun checkRadix(radix: Int): Int {
+internal actual fun checkRadix(radix: Int): Int {
     if(radix !in Char.MIN_RADIX..Char.MAX_RADIX) {
         throw IllegalArgumentException("radix $radix was not in valid range ${Char.MIN_RADIX..Char.MAX_RADIX}")
     }

@@ -1,25 +1,30 @@
 buildscript {
-    ext.kotlin_version = '1.2.0'
+    repositories {
+        google()
+        jcenter()
+        mavenCentral()
+        maven { url 'https://dl.bintray.com/kotlin/kotlin-dev' }
+        maven { url 'https://dl.bintray.com/kotlin/kotlin-eap' }
+        if (project.hasProperty("kotlinCompilerRepo")) {
+            maven { setUrl(project.property("kotlinCompilerRepo")) }
+        }
+    }
 
     dependencies {
         classpath "org.jetbrains.kotlin:kotlin-gradle-plugin:$kotlin_version"
+        classpath 'com.android.tools.build:gradle:3.5.0'
     }
 }
 
-apply plugin: 'kotlin'
-
-repositories {
-    mavenCentral()
-}
-
-dependencies {
-    compile "org.jetbrains.kotlin:kotlin-stdlib"
-}
-
-apply plugin: 'konan'
-
-konan.targets = ['iphone', 'iphone_sim']
-
-konanArtifacts {
-    framework('KotlinArithmeticParser')
+allprojects {
+    repositories {
+        google()
+        jcenter()
+        mavenCentral()
+        maven { url 'https://dl.bintray.com/kotlin/kotlin-dev' }
+        maven { url 'https://dl.bintray.com/kotlin/kotlin-eap' }
+        if (project.hasProperty("kotlinCompilerRepo")) {
+            maven { setUrl(project.property("kotlinCompilerRepo")) }
+        }
+    }
 }

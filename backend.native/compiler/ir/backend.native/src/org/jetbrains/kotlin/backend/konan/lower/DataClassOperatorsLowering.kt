@@ -1,92 +1,80 @@
 /*
- * Copyright 2010-2017 JetBrains s.r.o.
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Copyright 2010-2018 JetBrains s.r.o. Use of this source code is governed by the Apache 2.0 license
+ * that can be found in the LICENSE file.
  */
 
 package org.jetbrains.kotlin.backend.konan.lower
 
-import org.jetbrains.kotlin.backend.common.FunctionLoweringPass
+import org.jetbrains.kotlin.backend.common.FileLoweringPass
 import org.jetbrains.kotlin.backend.common.lower.createIrBuilder
 import org.jetbrains.kotlin.backend.common.lower.irBlock
 import org.jetbrains.kotlin.backend.konan.Context
-import org.jetbrains.kotlin.descriptors.ClassDescriptor
+import org.jetbrains.kotlin.ir.IrStatement
 import org.jetbrains.kotlin.ir.builders.*
+import org.jetbrains.kotlin.ir.declarations.IrFile
 import org.jetbrains.kotlin.ir.declarations.IrFunction
 import org.jetbrains.kotlin.ir.expressions.IrCall
 import org.jetbrains.kotlin.ir.expressions.IrExpression
-import org.jetbrains.kotlin.ir.visitors.IrElementTransformerVoid
-import org.jetbrains.kotlin.ir.visitors.transformChildrenVoid
-import org.jetbrains.kotlin.types.KotlinType
-import org.jetbrains.kotlin.types.typeUtil.makeNotNullable
+import org.jetbrains.kotlin.ir.types.classifierOrFail
+import org.jetbrains.kotlin.ir.util.irCall
+import org.jetbrains.kotlin.ir.util.isSimpleTypeWithQuestionMark
+import org.jetbrains.kotlin.ir.visitors.IrElementTransformer
 
-internal class DataClassOperatorsLowering(val context: Context): FunctionLoweringPass {
-
+internal class DataClassOperatorsLowering(val context: Context) : FileLoweringPass, IrElementTransformer<IrFunction?> {
     private val irBuiltins = context.irModule!!.irBuiltins
 
-    override fun lower(irFunction: IrFunction) {
-        irFunction.transformChildrenVoid(object: IrElementTransformerVoid() {
-            override fun visitCall(expression: IrCall): IrExpression {
-                expression.transformChildrenVoid(this)
+    override fun lower(irFile: IrFile) {
+        irFile.transformChildren(this, null)
+    }
 
-                if (expression.symbol != irBuiltins.dataClassArrayMemberToStringSymbol
-                        && expression.symbol != irBuiltins.dataClassArrayMemberHashCodeSymbol)
-                    return expression
+    override fun visitFunction(declaration: IrFunction, data: IrFunction?): IrStatement =
+        super.visitFunction(declaration, declaration)
 
-                val argument = expression.getValueArgument(0)!!
-                val argumentType = argument.type.makeNotNullable()
-                val genericType =
-                        if (argumentType.arguments.isEmpty())
-                            argumentType
-                        else
-                            (argumentType.constructor.declarationDescriptor as ClassDescriptor).defaultType
-                val isToString = expression.symbol == irBuiltins.dataClassArrayMemberToStringSymbol
-                val newSymbol = if (isToString)
-                                    context.ir.symbols.arrayContentToString[genericType]!!
-                                else
-                                    context.ir.symbols.arrayContentHashCode[genericType]!!
+    override fun visitCall(expression: IrCall, data: IrFunction?): IrExpression {
+        expression.transformChildren(this, data)
 
-                val startOffset = expression.startOffset
-                val endOffset = expression.endOffset
-                val irBuilder = context.createIrBuilder(irFunction.symbol, startOffset, endOffset)
+        if (expression.symbol != irBuiltins.dataClassArrayMemberToStringSymbol
+            && expression.symbol != irBuiltins.dataClassArrayMemberHashCodeSymbol)
+            return expression
 
-                return irBuilder.run {
-                    val typeArguments =
-                            if (argumentType.arguments.isEmpty())
-                                emptyList<KotlinType>()
-                            else argumentType.arguments.map { it.type }
-                    if (!argument.type.isMarkedNullable) {
-                        irCall(newSymbol, typeArguments).apply {
-                            extensionReceiver = argument
-                        }
-                    } else {
-                        val tmp = scope.createTemporaryVariable(argument)
-                        val call = irCall(newSymbol, typeArguments).apply {
-                            extensionReceiver = irGet(tmp.symbol)
-                        }
-                        irBlock(argument) {
-                            +tmp
-                            +irIfThenElse(call.type,
-                                    irEqeqeq(irGet(tmp.symbol), irNull()),
-                                    if (isToString)
-                                        irString("null")
-                                    else
-                                        irInt(0),
-                                    call)
-                        }
+        val argument = expression.getValueArgument(0)!!
+        val argumentClassifier = argument.type.classifierOrFail
+
+        val isToString = expression.symbol == irBuiltins.dataClassArrayMemberToStringSymbol
+        val newCalleeSymbol = if (isToString)
+            context.ir.symbols.arrayContentToString[argumentClassifier]!!
+        else
+            context.ir.symbols.arrayContentHashCode[argumentClassifier]!!
+
+        val newCallee = newCalleeSymbol.owner
+
+        val startOffset = expression.startOffset
+        val endOffset = expression.endOffset
+        val irBuilder = context.createIrBuilder(data!!.symbol, startOffset, endOffset)
+
+        return irBuilder.run {
+            // TODO: use more precise type arguments.
+            val typeArguments = (0 until newCallee.typeParameters.size).map { irBuiltins.anyNType }
+
+            if (!argument.type.isSimpleTypeWithQuestionMark) {
+                irCall(newCallee, typeArguments).apply {
+                    extensionReceiver = argument
+                }
+            } else {
+                irBlock(argument) {
+                    val tmp = irTemporary(argument)
+                    val call = irCall(newCallee, typeArguments).apply {
+                        extensionReceiver = irGet(tmp)
                     }
+                    +irIfThenElse(call.type,
+                        irEqeqeq(irGet(tmp), irNull()),
+                        if (isToString)
+                            irString("null")
+                        else
+                            irInt(0),
+                        call)
                 }
             }
-        })
+        }
     }
 }

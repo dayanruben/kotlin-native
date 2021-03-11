@@ -1,3 +1,4 @@
+
 /*
  * Copyright 2010-2017 JetBrains s.r.o.
  *
@@ -16,8 +17,10 @@
 
 include ':dependencies'
 include ':Interop:Indexer'
+include ':Interop:JsRuntime'
 include ':Interop:StubGenerator'
 include ':Interop:Runtime'
+include ':llvmCoverageMappingC'
 include ':llvmDebugInfoC'
 include ':libclangext'
 include ':klib'
@@ -26,6 +29,32 @@ include ':runtime'
 include ':common'
 include ':backend.native:tests'
 include ':backend.native:debugger-tests'
-include ':shared'
-include ':tools:kotlin-native-gradle-plugin'
-include ':utilities'
+include ':utilities:basic-utils'
+include ':utilities:cli-runner'
+include ':dependencyPacker'
+
+include ':platformLibs'
+include ':endorsedLibraries'
+include ':endorsedLibraries:kotlinx.cli'
+
+if (hasProperty("kotlinProjectPath")) {
+    include ':runtime:generator'
+    includeBuild(kotlinProjectPath) {
+        dependencySubstitution {
+            substitute module("org.jetbrains.kotlin:kotlin-compiler:$kotlinVersion") with project(':include:kotlin-compiler')
+            substitute module("org.jetbrains.kotlin:kotlin-stdlib-common:$kotlinStdlibVersion") with project(':include:kotlin-stdlib-common-sources')
+            substitute module("org.jetbrains.kotlin:kotlin-stdlib-gen:$kotlinStdlibVersion") with project(':tools:kotlin-stdlib-gen')
+            substitute module("org.jetbrains.kotlin:kotlin-util-io:$kotlinVersion") with project(':kotlin-util-io')
+            substitute module("org.jetbrains.kotlin:kotlin-util-klib:$kotlinVersion") with project(':kotlin-util-klib')
+            substitute module("org.jetbrains.kotlin:kotlin-util-klib-metadata:$kotlinVersion") with project(':kotlin-util-klib-metadata')
+            substitute module("org.jetbrains.kotlin:kotlin-native-utils:$kotlinVersion") with project(':native:kotlin-native-utils')
+            substitute module("org.jetbrains.kotlin:kotlin-reflect:$kotlinVersion") with project(':kotlin-reflect')
+            substitute module("org.jetbrains.kotlinx:kotlinx-metadata-klib") with project(':kotlinx-metadata-klib')
+        }
+    }
+}
+
+includeBuild 'shared'
+includeBuild 'build-tools'
+includeBuild 'tools/kotlin-native-gradle-plugin'
+

@@ -16,7 +16,7 @@
 
 package kotlinx.cinterop
 
-@Deprecated("Use StableRef<T> instead", ReplaceWith("StableRef<T>"))
+@Deprecated("Use StableRef<T> instead", ReplaceWith("StableRef<T>"), DeprecationLevel.ERROR)
 typealias StableObjPtr = StableRef<*>
 
 /**
@@ -26,9 +26,9 @@ typealias StableObjPtr = StableRef<*>
  *
  * Any [StableRef] should be manually [disposed][dispose]
  */
-data class StableRef<out T : Any> @PublishedApi internal constructor(
-        private val stablePtr: COpaquePointer,
-        private val ref: T // Note: storing the reference itself to avoid unchecked casts.
+@Suppress("NON_PUBLIC_PRIMARY_CONSTRUCTOR_OF_INLINE_CLASS")
+public inline class StableRef<out T : Any> @PublishedApi internal constructor(
+        private val stablePtr: COpaquePointer
 ) {
 
     companion object {
@@ -36,18 +36,18 @@ data class StableRef<out T : Any> @PublishedApi internal constructor(
         /**
          * Creates a handle for given object.
          */
-        fun <T : Any> create(any: T) = StableRef<T>(createStablePointer(any), any)
+        fun <T : Any> create(any: T) = StableRef<T>(createStablePointer(any))
 
         /**
          * Creates [StableRef] from given raw value.
          *
          * @param value must be a [value] of some [StableRef]
          */
-        @Deprecated("Use CPointer<*>.asStableRef<T>() instead", ReplaceWith("ptr.asStableRef<T>()"))
+        @Deprecated("Use CPointer<*>.asStableRef<T>() instead", ReplaceWith("ptr.asStableRef<T>()"),
+                DeprecationLevel.ERROR)
         fun fromValue(value: COpaquePointer) = value.asStableRef<Any>()
     }
-
-    @Deprecated("Use .asCPointer() instead", ReplaceWith("this.asCPointer()"))
+    @Deprecated("Use .asCPointer() instead", ReplaceWith("this.asCPointer()"), DeprecationLevel.ERROR)
     val value: COpaquePointer get() = this.asCPointer()
 
     /**
@@ -66,12 +66,12 @@ data class StableRef<out T : Any> @PublishedApi internal constructor(
     /**
      * Returns the object this handle was [created][StableRef.create] for.
      */
-    fun get() = this.ref
+    @Suppress("UNCHECKED_CAST")
+    fun get() = derefStablePointer(this.stablePtr) as T
 
 }
 
 /**
  * Converts to [StableRef] this opaque pointer produced by [StableRef.asCPointer].
  */
-inline fun <reified T : Any> CPointer<*>.asStableRef() =
-        StableRef<T>(this, derefStablePointer(this) as T)
+inline fun <reified T : Any> CPointer<*>.asStableRef(): StableRef<T> = StableRef<T>(this).also { it.get() }

@@ -1,64 +1,51 @@
 /*
- * Copyright 2010-2017 JetBrains s.r.o.
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Copyright 2010-2018 JetBrains s.r.o. Use of this source code is governed by the Apache 2.0 license
+ * that can be found in the LICENSE file.
  */
 
 package org.jetbrains.kotlin.backend.konan.llvm
 
-import llvm.LLVMStoreSizeOfType
+import llvm.LLVMLinkage
+import llvm.LLVMSetLinkage
 import llvm.LLVMValueRef
 import org.jetbrains.kotlin.backend.konan.*
-import org.jetbrains.kotlin.backend.konan.descriptors.contributedMethods
-import org.jetbrains.kotlin.backend.konan.descriptors.getStringValue
-import org.jetbrains.kotlin.backend.konan.descriptors.getStringValueOrNull
-import org.jetbrains.kotlin.descriptors.ClassDescriptor
-import org.jetbrains.kotlin.descriptors.ConstructorDescriptor
-import org.jetbrains.kotlin.descriptors.isFinalClass
+import org.jetbrains.kotlin.backend.konan.descriptors.getAnnotationStringValue
+import org.jetbrains.kotlin.backend.konan.ir.*
 import org.jetbrains.kotlin.ir.declarations.IrClass
 import org.jetbrains.kotlin.ir.declarations.IrSimpleFunction
+import org.jetbrains.kotlin.ir.util.constructors
+import org.jetbrains.kotlin.ir.util.findAnnotation
+import org.jetbrains.kotlin.ir.util.fqNameForIrSerialization
+import org.jetbrains.kotlin.ir.util.hasAnnotation
 import org.jetbrains.kotlin.resolve.descriptorUtil.fqNameSafe
-import org.jetbrains.kotlin.resolve.descriptorUtil.getSuperClassNotAny
-import org.jetbrains.kotlin.resolve.descriptorUtil.getSuperInterfaces
 
 internal class KotlinObjCClassInfoGenerator(override val context: Context) : ContextUtils {
     fun generate(irClass: IrClass) {
-        val descriptor = irClass.descriptor
-        assert(descriptor.isFinalClass)
+        assert(irClass.isFinalClass)
 
-        val objCLLvmDeclarations = context.llvmDeclarations.forClass(descriptor).objCDeclarations!!
+        val objCLLvmDeclarations = context.llvmDeclarations.forClass(irClass).objCDeclarations!!
 
         val instanceMethods = generateInstanceMethodDescs(irClass)
 
-        val companionObjectDescriptor = descriptor.companionObjectDescriptor
-        val classMethods = companionObjectDescriptor?.generateOverridingMethodDescs() ?: emptyList()
+        val companionObject = irClass.companionObject()
+        val classMethods = companionObject?.generateMethodDescs().orEmpty()
 
-        val superclassName = descriptor.getSuperClassNotAny()!!.let {
+        val superclassName = irClass.getSuperClassNotAny()!!.let {
             context.llvm.imports.add(it.llvmSymbolOrigin)
-            it.name.asString()
+            it.descriptor.getExternalObjCClassBinaryName()
         }
-        val protocolNames = descriptor.getSuperInterfaces().map {
+        val protocolNames = irClass.getSuperInterfaces().map {
             context.llvm.imports.add(it.llvmSymbolOrigin)
             it.name.asString().removeSuffix("Protocol")
         }
 
-        val bodySize =
-                LLVMStoreSizeOfType(llvmTargetData, context.llvmDeclarations.forClass(descriptor).bodyType).toInt()
+        val exportedClassName = selectExportedClassName(irClass)
+        val className = exportedClassName ?: selectInternalClassName(irClass)
 
-        val className = selectClassName(descriptor)?.let { staticData.cStringLiteral(it) } ?: NullPointer(int8Type)
-
+        val classNameLiteral = className?.let { staticData.cStringLiteral(it) } ?: NullPointer(int8Type)
         val info = Struct(runtime.kotlinObjCClassInfo,
-                className,
+                classNameLiteral,
+                Int32(if (exportedClassName != null) 1 else 0),
 
                 staticData.cStringLiteral(superclassName),
                 staticData.placeGlobalConstArray("", int8TypePtr,
@@ -70,31 +57,34 @@ internal class KotlinObjCClassInfoGenerator(override val context: Context) : Con
                 staticData.placeGlobalConstArray("", runtime.objCMethodDescription, classMethods),
                 Int32(classMethods.size),
 
-                Int32(bodySize),
                 objCLLvmDeclarations.bodyOffsetGlobal.pointer,
 
-                descriptor.typeInfoPtr,
-                companionObjectDescriptor?.typeInfoPtr ?: NullPointer(runtime.typeInfoType),
+                irClass.typeInfoPtr,
+                companionObject?.typeInfoPtr ?: NullPointer(runtime.typeInfoType),
 
-                objCLLvmDeclarations.classPointerGlobal.pointer
+                staticData.placeGlobal(
+                        "kobjcclassptr:${irClass.fqNameForIrSerialization}#internal",
+                        NullPointer(int8Type)
+                ).pointer,
+
+                generateClassDataImp(irClass)
         )
 
         objCLLvmDeclarations.classInfoGlobal.setInitializer(info)
 
-        objCLLvmDeclarations.classPointerGlobal.setInitializer(NullPointer(int8Type))
         objCLLvmDeclarations.bodyOffsetGlobal.setInitializer(Int32(0))
     }
+
+    private fun IrClass.generateMethodDescs(): List<ObjCMethodDesc> = this.generateImpMethodDescs()
 
     private fun generateInstanceMethodDescs(
             irClass: IrClass
     ): List<ObjCMethodDesc> = mutableListOf<ObjCMethodDesc>().apply {
-        val descriptor = irClass.descriptor
-        addAll(descriptor.generateOverridingMethodDescs())
-        addAll(irClass.generateImpMethodDescs())
+        addAll(irClass.generateMethodDescs())
         val allImplementedSelectors = this.map { it.selector }.toSet()
 
-        assert(descriptor.getSuperClassNotAny()!!.isExternalObjCClass())
-        val allInitMethodsInfo = descriptor.getSuperClassNotAny()!!.constructors
+        assert(irClass.getSuperClassNotAny()!!.isExternalObjCClass())
+        val allInitMethodsInfo = irClass.getSuperClassNotAny()!!.constructors
                 .mapNotNull { it.getObjCInitMethod()?.getExternalObjCMethodInfo() }
                 .filter { it.selector !in allImplementedSelectors }
                 .distinctBy { it.selector }
@@ -104,17 +94,18 @@ internal class KotlinObjCClassInfoGenerator(override val context: Context) : Con
         }
     }
 
-    private fun selectClassName(descriptor: ClassDescriptor): String? {
-        val exportObjCClassAnnotation =
-                descriptor.annotations.findAnnotation(context.interopBuiltIns.exportObjCClass.fqNameSafe)
+    private fun selectExportedClassName(irClass: IrClass): String? {
+        val exportObjCClassAnnotation = context.interopBuiltIns.exportObjCClass.fqNameSafe
+        val explicitName = irClass.getAnnotationArgumentValue<String>(exportObjCClassAnnotation, "name")
+        if (explicitName != null) return explicitName
 
-        return if (exportObjCClassAnnotation != null) {
-            exportObjCClassAnnotation.getStringValueOrNull("name") ?: descriptor.name.asString()
-        } else if (descriptor.isExported()) {
-            descriptor.fqNameSafe.asString()
-        } else {
-            null // Generate as anonymous.
-        }
+        return if (irClass.annotations.hasAnnotation(exportObjCClassAnnotation)) irClass.name.asString() else null
+    }
+
+    private fun selectInternalClassName(irClass: IrClass): String? = if (irClass.isExported()) {
+        irClass.fqNameForIrSerialization.asString()
+    } else {
+        null // Generate as anonymous.
     }
 
     private val impType = pointerType(functionType(int8TypePtr, true, int8TypePtr, int8TypePtr))
@@ -128,32 +119,54 @@ internal class KotlinObjCClassInfoGenerator(override val context: Context) : Con
             staticData.cStringLiteral(encoding)
     )
 
-    private fun generateMethodDesc(info: ObjCMethodInfo) = ObjCMethodDesc(
-            info.selector,
-            info.encoding,
-            context.llvm.externalFunction(
-                    info.imp,
-                    functionType(voidType),
-                    origin = info.bridge.llvmSymbolOrigin
-            )
-    )
-
-    private fun ClassDescriptor.generateOverridingMethodDescs(): List<ObjCMethodDesc> =
-            this.unsubstitutedMemberScope.contributedMethods.filter {
-                it.kind.isReal && it !is ConstructorDescriptor
-            }.mapNotNull { it.getObjCMethodInfo() }.map { generateMethodDesc(it) }
-
     private fun IrClass.generateImpMethodDescs(): List<ObjCMethodDesc> = this.declarations
             .filterIsInstance<IrSimpleFunction>()
             .mapNotNull {
                 val annotation =
-                        it.descriptor.annotations.findAnnotation(context.interopBuiltIns.objCMethodImp.fqNameSafe) ?:
+                        it.annotations.findAnnotation(context.interopBuiltIns.objCMethodImp.fqNameSafe) ?:
                                 return@mapNotNull null
 
                 ObjCMethodDesc(
-                        annotation.getStringValue("selector"),
-                        annotation.getStringValue("encoding"),
-                        it.descriptor.llvmFunction
+                        annotation.getAnnotationStringValue("selector"),
+                        annotation.getAnnotationStringValue("encoding"),
+                        it.llvmFunction
                 )
             }
+
+    private fun generateClassDataImp(irClass: IrClass): ConstPointer {
+        val classDataPointer = staticData.placeGlobal(
+                "kobjcclassdata:${irClass.fqNameForIrSerialization}#internal",
+                Zero(runtime.kotlinObjCClassData)
+        ).pointer
+
+        val functionType = functionType(classDataPointer.llvmType, false, int8TypePtr, int8TypePtr)
+        val functionName = "kobjcclassdataimp:${irClass.fqNameForIrSerialization}#internal"
+
+        val function = generateFunctionNoRuntime(codegen, functionType, functionName) {
+            ret(classDataPointer.llvm)
+        }.also {
+            LLVMSetLinkage(it, LLVMLinkage.LLVMPrivateLinkage)
+        }
+
+        return constPointer(function)
+    }
+
+    private val codegen = CodeGenerator(context)
+
+    companion object {
+        const val createdClassFieldIndex = 11
+    }
+}
+
+internal fun CodeGenerator.kotlinObjCClassInfo(irClass: IrClass): LLVMValueRef {
+    require(irClass.isKotlinObjCClass())
+    return if (isExternal(irClass)) {
+        importGlobal(
+                irClass.kotlinObjCClassInfoSymbolName,
+                runtime.kotlinObjCClassInfo,
+                origin = irClass.llvmSymbolOrigin
+        )
+    } else {
+        context.llvmDeclarations.forClass(irClass).objCDeclarations!!.classInfoGlobal.llvmGlobal
+    }
 }

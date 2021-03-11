@@ -38,42 +38,54 @@ typealias KotlinExpression = String
  * For this identifier constructs the string to be parsed by Kotlin as `SimpleName`
  * defined [here](https://kotlinlang.org/docs/reference/grammar.html#SimpleName).
  */
-fun String.asSimpleName(): String = if (this in kotlinKeywords) {
+fun String.asSimpleName(): String = if (this in kotlinKeywords || this.contains("$")) {
     "`$this`"
 } else {
     this
 }
 
 /**
+ * Yet another mangler, particularly to avoid secondary clash, e.g. when a property
+ * in prototype (interface) is mangled and that will cause another clash in the class
+ * which implements this interface.
+ * Rationale: keep algorithm simple but use the mangling characters which are rare
+ * in normal code, and keep mangling easy readable.
+ */
+internal fun mangleSimple(name: String): String {
+    val reserved = setOf("Companion")
+    val postfix = "\$"
+    return if (name in reserved)
+        "$name$postfix"
+    else
+        name
+}
+
+/**
  * Returns the expression to be parsed by Kotlin as string literal with given contents,
  * i.e. transforms `foo$bar` to `"foo\$bar"`.
  */
-fun String.quoteAsKotlinLiteral(): KotlinExpression {
-    val sb = StringBuilder()
-    sb.append('"')
+fun String.quoteAsKotlinLiteral(): KotlinExpression = buildString {
+    append('"')
 
-    this.forEach { c ->
-        val escaped = when (c) {
-            in 'a' .. 'z', in 'A' .. 'Z', in '0' .. '9', '_', '@', ':', '{', '}', '=', '[', ']', '^', '#', '*' -> c.toString()
-            '$' -> "\\$"
-            else -> "\\u" + "%04X".format(c.toInt()) // TODO: improve result readability by preserving more characters.
+    this@quoteAsKotlinLiteral.forEach { c ->
+        when (c) {
+            in charactersAllowedInKotlinStringLiterals -> append(c)
+            '$' -> append("\\$")
+            else -> append("\\u" + "%04X".format(c.toInt()))
         }
-        sb.append(escaped)
     }
 
-    sb.append('"')
-    return sb.toString()
+    append('"')
 }
 
-fun block(header: String, lines: Iterable<String>) = block(header, lines.asSequence())
+// TODO: improve literal readability by preserving more characters.
 
-fun block(header: String, lines: Sequence<String>) =
-        sequenceOf("$header {") +
-                lines.map { "    $it" } +
-                sequenceOf("}")
+private val charactersAllowedInKotlinStringLiterals: Set<Char> = mutableSetOf<Char>().apply {
+    addAll('a' .. 'z')
+    addAll('A' .. 'Z')
+    addAll('0' .. '9')
+    addAll(listOf('_', '@', ':', ';', '.', ',', '{', '}', '=', '[', ']', '^', '#', '*', ' ', '(', ')'))
+}
 
 val annotationForUnableToImport
     get() = "@Deprecated(${"Unable to import this declaration".quoteAsKotlinLiteral()}, level = DeprecationLevel.ERROR)"
-
-fun String.applyToStrings(vararg arguments: String) =
-        "${this}(${arguments.joinToString { it.quoteAsKotlinLiteral() }})"

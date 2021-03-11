@@ -14,70 +14,148 @@
  * limitations under the License.
  */
 
-/**
- * One may use bintrayUser/bintrayKey project properties or BINTRAY_USER/BINTRAY_KEY environment variables to upload
- * built plugin to bintray repository.
- */
+import org.jetbrains.kotlin.konan.*
 
 buildscript {
-    apply from: "$rootDir/gradle/kotlinGradlePlugin.gradle"
+    ext.rootBuildDirectory = file('../../')
+
+    apply from: "$rootBuildDirectory/gradle/loadRootProperties.gradle"
+    apply from: "$rootBuildDirectory/gradle/kotlinGradlePlugin.gradle"
 
     repositories {
+        maven {
+            url = 'https://cache-redirector.jetbrains.com/jcenter'
+        }
         jcenter()
+        maven {
+            url "https://cache-redirector.jetbrains.com/plugins.gradle.org/m2/"
+        }
+        gradlePluginPortal()
     }
 
     dependencies {
-        classpath 'com.jfrog.bintray.gradle:gradle-bintray-plugin:1.7.3'
+        classpath 'com.github.jengelman.gradle.plugins:shadow:4.0.4'
+        classpath "org.jetbrains.kotlin:kotlin-native-shared:$konanVersion"
     }
 }
-apply plugin: 'java'
+
+apply plugin: 'java-gradle-plugin'
 apply plugin: 'kotlin'
 apply plugin: 'groovy'
-apply plugin: 'maven-publish'
-apply plugin: 'com.jfrog.bintray'
+apply plugin: 'com.github.johnrengelman.shadow'
 
 group = 'org.jetbrains.kotlin'
-version = konanVersion
+version = CompilerVersionGeneratedKt.getCurrentCompilerVersion()
 
 repositories {
     mavenCentral()
+    maven {
+        url buildKotlinCompilerRepo
+    }
+    maven {
+        url kotlinCompilerRepo
+    }
 }
 
-task pluginMetadata {
-    def outputDir = file("$buildDir/$name")
+configurations {
+    bundleDependencies {
+        transitive = false
+    }
 
-    inputs.files sourceSets.main.runtimeClasspath
-    outputs.dir outputDir
+    implementation.extendsFrom shadow
+    compileOnly.extendsFrom bundleDependencies
+    testImplementation.extendsFrom bundleDependencies
+}
 
+tasks.withType(org.jetbrains.kotlin.gradle.tasks.KotlinCompile).configureEach {
+    kotlinOptions.freeCompilerArgs = ["-Xskip-prerelease-check"]
+}
+
+dependencies {
+    shadow "org.jetbrains.kotlin:kotlin-stdlib:1.3.0"
+
+    // Bundle the serialization plugin into the final jar because we shade classes of the kotlin plugin
+    // while the serialization one extends them.
+    bundleDependencies "org.jetbrains.kotlin:kotlin-serialization:$kotlinVersion"
+    bundleDependencies "org.jetbrains.kotlin:kotlin-gradle-plugin:$kotlinVersion"
+    bundleDependencies "org.jetbrains.kotlin:kotlin-gradle-plugin-api:$kotlinVersion"
+    bundleDependencies "org.jetbrains.kotlin:kotlin-native-utils:$kotlinVersion"
+    bundleDependencies "org.jetbrains.kotlin:kotlin-native-shared:$konanVersion"
+    bundleDependencies "org.jetbrains.kotlin:kotlin-util-io:$kotlinVersion"
+    bundleDependencies "org.jetbrains.kotlin:kotlin-util-klib:$kotlinVersion"
+
+    testImplementation 'junit:junit:4.12'
+    testImplementation "org.jetbrains.kotlin:kotlin-test:$buildKotlinVersion"
+    testImplementation "org.jetbrains.kotlin:kotlin-test-junit:$buildKotlinVersion"
+    testImplementation "org.tools4j:tools4j-spockito:1.6"
+    testImplementation('org.spockframework:spock-core:1.1-groovy-2.4') {
+        exclude module: 'groovy-all'
+    }
+}
+
+shadowJar {
+    from sourceSets.main.output
+    configurations = [project.configurations.bundleDependencies]
+    archiveClassifier.set(null)
+    relocate('org.jetbrains.kotlinx', 'shadow.org.jetbrains.kotlinx')
+    relocate('org.jetbrains.kotlin.compilerRunner', 'shadow.org.jetbrains.kotlin.compilerRunner')
+    relocate('org.jetbrains.kotlin.konan', 'shadow.org.jetbrains.kotlin.konan')
+    relocate('org.jetbrains.kotlin.gradle', 'shadow.org.jetbrains.kotlin.gradle') {
+        exclude('org.jetbrains.kotlin.gradle.plugin.experimental.**')
+        exclude('org.jetbrains.kotlin.gradle.plugin.konan.**')
+        exclude('org.jetbrains.kotlin.gradle.plugin.model.**')
+    }
+
+    exclude {
+        def path = it.relativePath.pathString
+        if (path.startsWith("META-INF/gradle-plugins") && path.endsWith(".properties")) {
+            def fileName = it.name
+            def id = fileName.take(fileName.lastIndexOf('.'))
+            return project.gradlePlugin.plugins.findByName(id) == null
+        }
+        return false
+    }
+    exclude('META-INF/services/org.jetbrains.kotlin.compiler.plugin.ComponentRegistrar')
+    exclude('META-INF/services/org.jetbrains.kotlin.gradle.plugin.KotlinGradleSubplugin')
+}
+
+jar {
+    dependsOn shadowJar
+    enabled = false
+}
+
+pluginUnderTestMetadata {
+    dependsOn shadowJar
     doLast {
-        outputDir.mkdirs()
-        def metadata = new Properties()
-        metadata.put("implementation-classpath", sourceSets.main.runtimeClasspath.join(File.pathSeparator))
-        file("$outputDir/plugin-under-test-metadata.properties").withPrintWriter {
-            metadata.store(it, "Plugin metadata")
+        // Since Gradle 4.10 it isn't possible to edit the pluginUnderTest classpath.
+        // So we have to manually set the implementation-classpath to get the output fat-jar.
+        def pluginMetadata = outputDirectory.get().file(PluginUnderTestMetadata.METADATA_FILE_NAME).getAsFile()
+        def classpath = files(shadowJar.archivePath) + configurations.shadow
+        new Properties().with { properties ->
+            pluginMetadata.withInputStream {
+                properties.load(it)
+            }
+            properties.setProperty(PluginUnderTestMetadata.IMPLEMENTATION_CLASSPATH_PROP_KEY , classpath.asPath)
+            pluginMetadata.withOutputStream {
+                properties.store(it, null)
+            }
         }
     }
 }
 
-dependencies {
-    compile project(':shared')
-    compile "org.jetbrains.kotlin:kotlin-stdlib:$buildKotlinVersion"
-    compile gradleApi()
-
-    testCompile gradleTestKit()
-    testCompile 'junit:junit:4.12'
-    testCompile('org.spockframework:spock-core:1.1-groovy-2.4') {
-        exclude module: 'groovy-all'
-    }
-    testRuntime files(pluginMetadata)
-}
-
 test {
+    dependsOn shadowJar
+    systemProperty("kotlin.version", kotlinVersion)
+    systemProperty("kotlin.repo", kotlinCompilerRepo)
     if (project.hasProperty("konan.home")) {
         systemProperty("konan.home", project.property("konan.home"))
+        systemProperty("org.jetbrains.kotlin.native.home", project.property("konan.home"))
+    } else if (project.hasProperty("org.jetbrains.kotlin.native.home")) {
+        systemProperty("org.jetbrains.kotlin.native.home", project.property("org.jetbrains.kotlin.native.home"))
     } else {
-        dependsOn ':dist'
+        // The Koltin/Native compiler must be built before test execution.
         systemProperty("konan.home", distDir.absolutePath)
+        systemProperty("org.jetbrains.kotlin.native.home", distDir.absolutePath)
     }
     if (project.hasProperty("konan.jvmArgs")) {
         systemProperty("konan.jvmArgs", project.property("konan.jvmArgs"))
@@ -87,46 +165,41 @@ test {
     if (project.hasProperty("maxParallelForks")) {
         maxParallelForks=project.property("maxParallelForks")
     }
-}
-
-jar {
-    from (rootProject.findProject(':shared').sourceSets.main.output)
+    if (project.hasProperty("filter")) {
+        filter.includeTestsMatching project.property("filter")
+    }
+    if (project.hasProperty("gradleVersion")) {
+        systemProperty("gradleVersion", project.property("gradleVersion"))
+    }
 }
 
 processResources {
-    expand('konanVersion': konanVersion)
-    from(rootProject.project(':utilities').file('env_blacklist'))
+    from(file("$rootBuildDirectory/utilities/env_blacklist"))
 }
 
-publishing {
-    publications {
-        gradlePlugin(MavenPublication) {
-            artifact jar
-            pom.withXml { XmlProvider xml ->
-                def stdlibDep = xml.asNode().appendNode("dependencies").appendNode("dependency")
-                stdlibDep.appendNode("groupId", "org.jetbrains.kotlin")
-                stdlibDep.appendNode("artifactId", "kotlin-stdlib")
-                stdlibDep.appendNode("version", "$buildKotlinVersion")
-            }
-        }
-    }
+tasks.named('compileTestGroovy') {
+    classpath = sourceSets.test.compileClasspath
 }
 
-bintray {
-    user = project.hasProperty('bintrayUser') ? project.property('bintrayUser') : System.getenv('BINTRAY_USER')
-    key = project.hasProperty('bintrayKey') ? project.property('bintrayKey') : System.getenv('BINTRAY_KEY')
-    pkg {
-        repo = 'kotlin-native-dependencies'
-        name = 'kotlin-native-gradle-plugin'
-        userOrg = 'jetbrains'
-        licenses = ['Apache-2.0']
-        vcsUrl = 'https://github.com/JetBrains/kotlin-native'
-        version {
-            name = konanVersion
-            desc = "Kotlin Native Gradle plugin $konanVersion"
+tasks.named('compileTestKotlin') {
+    classpath += files(sourceSets.test.groovy.classesDirectory)
+}
+
+gradlePlugin {
+    plugins {
+        create('konan') {
+            id = 'konan'
+            implementationClass = 'org.jetbrains.kotlin.gradle.plugin.konan.KonanPlugin'
         }
-        publish = true // project.hasProperty("publish")
-        override = project.hasProperty("override")
+        // We bundle a shaded version of kotlinx-serialization plugin
+        create('kotlinx-serialization-native') {
+            id = 'kotlinx-serialization-native'
+            implementationClass = 'shadow.org.jetbrains.kotlinx.serialization.gradle.SerializationGradleSubplugin'
+        }
+
+        create('org.jetbrains.kotlin.konan') {
+            id = 'org.jetbrains.kotlin.konan'
+            implementationClass = 'org.jetbrains.kotlin.gradle.plugin.konan.KonanPlugin'
+        }
     }
-    publications = ['gradlePlugin']
 }

@@ -21,6 +21,9 @@ import org.jetbrains.kotlin.native.interop.indexer.*
 val EnumDef.isAnonymous: Boolean
     get() = spelling.contains("(anonymous ") // TODO: it is a hack
 
+val StructDecl.isAnonymous: Boolean
+    get() = spelling.contains("(anonymous ") // TODO: it is a hack
+
 /**
  * Returns the expression which could be used for this type in C code.
  * Note: the resulting string doesn't exactly represent this type, but it is enough for current purposes.
@@ -28,13 +31,16 @@ val EnumDef.isAnonymous: Boolean
  * TODO: use libclang to implement?
  */
 fun Type.getStringRepresentation(): String = when (this) {
-    is VoidType -> "void"
-    is CharType -> "char"
-    is BoolType -> "BOOL"
+    VoidType -> "void"
+    CharType -> "char"
+    CBoolType -> "_Bool"
+    ObjCBoolType -> "BOOL"
     is IntegerType -> this.spelling
     is FloatingType -> this.spelling
 
-    is PointerType, is ArrayType -> "void*"
+    is VectorType -> this.spelling
+    is PointerType -> getPointerTypeStringRepresentation(this.pointeeType)
+    is ArrayType -> getPointerTypeStringRepresentation(this.elemType)
 
     is RecordType -> this.decl.spelling
 
@@ -54,17 +60,29 @@ fun Type.getStringRepresentation(): String = when (this) {
         is ObjCBlockPointer -> "id"
     }
 
-    else -> throw kotlin.NotImplementedError()
+    else -> throw NotImplementedError()
+}
+
+fun getPointerTypeStringRepresentation(pointee: Type): String =
+        (getStringRepresentationOfPointee(pointee) ?: "void") + "*"
+
+private fun getStringRepresentationOfPointee(type: Type): String? {
+    val unwrapped = type.unwrapTypedefs()
+
+    return when (unwrapped) {
+        is PrimitiveType -> unwrapped.getStringRepresentation()
+        is PointerType -> getStringRepresentationOfPointee(unwrapped.pointeeType)?.plus("*")
+        is RecordType -> if (unwrapped.decl.isAnonymous || unwrapped.decl.spelling == "struct __va_list_tag") {
+            null
+        } else {
+            unwrapped.decl.spelling
+        }
+        else -> null
+    }
 }
 
 private val ObjCQualifiedPointer.protocolQualifier: String
     get() = if (this.protocols.isEmpty()) "" else " <${protocols.joinToString { it.name }}>"
-
-tailrec fun Type.unwrapTypedefs(): Type = if (this is Typedef) {
-    this.def.aliased.unwrapTypedefs()
-} else {
-    this
-}
 
 fun blockTypeStringRepresentation(type: ObjCBlockPointer): String {
     return buildString {

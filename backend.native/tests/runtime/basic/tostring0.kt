@@ -1,3 +1,8 @@
+/*
+ * Copyright 2010-2018 JetBrains s.r.o. Use of this source code is governed by the Apache 2.0 license
+ * that can be found in the LICENSE file.
+ */
+
 package runtime.basic.tostring0
 
 import kotlin.test.*
@@ -15,6 +20,7 @@ import kotlin.test.*
     println(3.14159265358.toString())
     // Here we differ from Java, as have no dtoa() yet.
     println(1e27.toFloat().toString())
+    println(1e7.toString())
     println(1e-300.toDouble().toString())
     println(true.toString())
     println(false.toString())

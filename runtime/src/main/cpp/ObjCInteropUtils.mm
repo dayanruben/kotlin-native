@@ -19,8 +19,11 @@
 #if KONAN_OBJC_INTEROP
 
 #import <objc/runtime.h>
+#import <CoreFoundation/CFString.h>
 #import <Foundation/NSException.h>
 #import <Foundation/NSString.h>
+#import "Memory.h"
+#import "ObjCInteropUtilsPrivate.h"
 
 namespace {
   Class nsStringClass = nullptr;
@@ -44,18 +47,19 @@ namespace {
 
 extern "C" {
 
-id Kotlin_Interop_CreateNSStringFromKString(const ObjHeader* str) {
+id Kotlin_ObjCExport_CreateNSStringFromKString(ObjHeader* str);
+
+id Kotlin_Interop_CreateNSStringFromKString(ObjHeader* str) {
+  // Note: this function is just a bit specialized [Kotlin_Interop_refToObjC].
   if (str == nullptr) {
     return nullptr;
   }
 
-  const KChar* utf16Chars = CharArrayAddressOfElementAt(str->array(), 0);
+  if (void* associatedObject = str->GetAssociatedObject()) {
+    return (id)associatedObject;
+  }
 
-  NSString* result = [[[getNSStringClass() alloc] initWithBytes:utf16Chars
-    length:str->array()->count_*sizeof(KChar)
-    encoding:NSUTF16LittleEndianStringEncoding] autorelease];
-
-  return result;
+  return Kotlin_ObjCExport_CreateNSStringFromKString(str);
 }
 
 OBJ_GETTER(Kotlin_Interop_CreateKStringFromNSString, NSString* str) {
@@ -63,26 +67,18 @@ OBJ_GETTER(Kotlin_Interop_CreateKStringFromNSString, NSString* str) {
     RETURN_OBJ(nullptr);
   }
 
-  size_t length = [str length];
-  NSRange range = {0, length};
+  CFStringRef immutableCopyOrSameStr = CFStringCreateCopy(nullptr, (CFStringRef)str);
+
+  auto length = CFStringGetLength(immutableCopyOrSameStr);
+  CFRange range = {0, length};
   ArrayHeader* result = AllocArrayInstance(theStringTypeInfo, length, OBJ_RESULT)->array();
   KChar* rawResult = CharArrayAddressOfElementAt(result, 0);
 
-  [str getCharacters:rawResult range:range];
+  CFStringGetCharacters(immutableCopyOrSameStr, range, rawResult);
+
+  result->obj()->SetAssociatedObject((void*)immutableCopyOrSameStr);
 
   RETURN_OBJ(result->obj());
-}
-
-OBJ_GETTER(Kotlin_Interop_ObjCToString, id <NSObject> ptr) {
-  RETURN_RESULT_OF(Kotlin_Interop_CreateKStringFromNSString, ptr.description);
-}
-
-KInt Kotlin_Interop_ObjCHashCode(id <NSObject> ptr) {
-  return (KInt) ptr.hash;
-}
-
-KBoolean Kotlin_Interop_ObjCEquals(id <NSObject> ptr, id otherPtr) {
-  return [ptr isEqual:otherPtr];
 }
 
 // Note: this body is used for init methods with signatures differing from this;
@@ -103,49 +99,39 @@ id MissingInitImp(id self, SEL _cmd) {
   return nullptr;
 }
 
-// TODO: rework the interface to reduce the number of virtual calls
-// in Kotlin_Interop_createKotlinObjectHolder and Kotlin_Interop_unwrapKotlinObjectHolder
-@interface KotlinObjectHolder : NSObject
--(id)initWithRef:(KRef)ref;
--(KRef)ref;
-@end;
-
-@implementation KotlinObjectHolder {
-  KRef ref_;
-};
-
--(id)initWithRef:(KRef)ref {
-  if (self = [super init]) {
-    UpdateRef(&ref_, ref);
-  }
-  return self;
-}
-
--(KRef)ref {
-  return ref_;
-}
-
--(void)dealloc {
-  UpdateRef(&ref_, nullptr);
-  [super dealloc];
-}
-
-@end;
+// Initialized in [ObjCInteropUtilsClasses.mm].
+id (*Kotlin_Interop_createKotlinObjectHolder_ptr)(KRef any) = nullptr;
+KRef (*Kotlin_Interop_unwrapKotlinObjectHolder_ptr)(id holder) = nullptr;
 
 id Kotlin_Interop_createKotlinObjectHolder(KRef any) {
-  if (any == nullptr) {
-    return nullptr;
-  }
-
-  return [[[KotlinObjectHolder alloc] initWithRef:any] autorelease];
+  return Kotlin_Interop_createKotlinObjectHolder_ptr(any);
 }
 
 KRef Kotlin_Interop_unwrapKotlinObjectHolder(id holder) {
-  if (holder == nullptr) {
-    return nullptr;
-  }
+  return Kotlin_Interop_unwrapKotlinObjectHolder_ptr(holder);
+}
 
-  return [((KotlinObjectHolder*)holder) ref];
+KBoolean Kotlin_Interop_DoesObjectConformToProtocol(id obj, void* prot, KBoolean isMeta) {
+  BOOL objectIsClass = class_isMetaClass(object_getClass(obj));
+  if ((isMeta && !objectIsClass) || (!isMeta && objectIsClass)) return false;
+  // TODO: handle root classes properly.
+
+  return [((id<NSObject>)obj) conformsToProtocol:(Protocol*)prot];
+}
+
+KBoolean Kotlin_Interop_IsObjectKindOfClass(id obj, void* cls) {
+  return [((id<NSObject>)obj) isKindOfClass:(Class)cls];
+}
+
+OBJ_GETTER((*Konan_ObjCInterop_getWeakReference_ptr), KRef ref) = nullptr;
+void (*Konan_ObjCInterop_initWeakReference_ptr)(KRef ref, id objcPtr) = nullptr;
+
+OBJ_GETTER(Konan_ObjCInterop_getWeakReference, KRef ref) {
+  RETURN_RESULT_OF(Konan_ObjCInterop_getWeakReference_ptr, ref);
+}
+
+void Konan_ObjCInterop_initWeakReference(KRef ref, id objcPtr) {
+  Konan_ObjCInterop_initWeakReference_ptr(ref, objcPtr);
 }
 
 } // extern "C"
@@ -164,21 +150,6 @@ OBJ_GETTER(Kotlin_Interop_CreateKStringFromNSString, void* str) {
   RETURN_OBJ(nullptr);
 }
 
-OBJ_GETTER(Kotlin_Interop_ObjCToString, KNativePtr ptr) {
-  RuntimeAssert(false, "Objective-C interop is disabled");
-  RETURN_OBJ(nullptr);
-}
-
-KInt Kotlin_Interop_ObjCHashCode(KNativePtr ptr) {
-  RuntimeAssert(false, "Objective-C interop is disabled");
-  return 0;
-}
-
-KBoolean Kotlin_Interop_ObjCEquals(KNativePtr ptr, KNativePtr otherPtr) {
-  RuntimeAssert(false, "Objective-C interop is disabled");
-  return 0;
-}
-
 void* Kotlin_Interop_createKotlinObjectHolder(KRef any) {
   RuntimeAssert(false, "Objective-C interop is disabled");
   return nullptr;
@@ -187,6 +158,15 @@ void* Kotlin_Interop_createKotlinObjectHolder(KRef any) {
 KRef Kotlin_Interop_unwrapKotlinObjectHolder(void* holder) {
   RuntimeAssert(false, "Objective-C interop is disabled");
   return nullptr;
+}
+  
+OBJ_GETTER(Konan_ObjCInterop_getWeakReference, KRef ref) {
+  RuntimeAssert(false, "Objective-C interop is disabled");
+  RETURN_OBJ(nullptr);
+}
+
+void Konan_ObjCInterop_initWeakReference(KRef ref, void* objcPtr) {
+  RuntimeAssert(false, "Objective-C interop is disabled");
 }
 
 } // extern "C"

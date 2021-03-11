@@ -1,34 +1,18 @@
 /*
- * Copyright 2010-2017 JetBrains s.r.o.
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Copyright 2010-2018 JetBrains s.r.o. Use of this source code is governed by the Apache 2.0 license
+ * that can be found in the LICENSE file.
  */
 
 package org.jetbrains.kotlin.backend.konan.descriptors
 
 import org.jetbrains.kotlin.descriptors.*
-import org.jetbrains.kotlin.serialization.deserialization.descriptors.*
-import org.jetbrains.kotlin.serialization.KonanLinkData
-import org.jetbrains.kotlin.incremental.components.NoLookupLocation
+import org.jetbrains.kotlin.descriptors.konan.DeserializedKlibModuleOrigin
+import org.jetbrains.kotlin.descriptors.konan.klibModuleOrigin
+import org.jetbrains.kotlin.descriptors.konan.kotlinLibrary
+import org.jetbrains.kotlin.konan.library.KLIB_INTEROP_IR_PROVIDER_IDENTIFIER
+import org.jetbrains.kotlin.library.BaseKotlinLibrary
 import org.jetbrains.kotlin.name.Name
-import org.jetbrains.kotlin.name.FqName
-import org.jetbrains.kotlin.types.KotlinType
-
-val DeserializedPropertyDescriptor.backingField: PropertyDescriptor?
-    get() = 
-        if (this.proto.getExtension(KonanLinkData.hasBackingField)) 
-            this 
-        else null
+import org.jetbrains.kotlin.serialization.deserialization.descriptors.*
 
 fun DeclarationDescriptor.deepPrint() {
     this.accept(DeepPrintVisitor(PrintVisitor()), 0)
@@ -61,4 +45,21 @@ internal val FunctionDescriptor.deserializedPropertyIfAccessor: DeserializedCall
 internal val CallableMemberDescriptor.isDeserializableCallable
     get () = (this.propertyIfAccessor is DeserializedCallableMemberDescriptor)
 
+fun DeclarationDescriptor.findTopLevelDescriptor(): DeclarationDescriptor {
+    return if (this.containingDeclaration is org.jetbrains.kotlin.descriptors.PackageFragmentDescriptor) this.propertyIfAccessor
+    else this.containingDeclaration!!.findTopLevelDescriptor()
+}
 
+val ModuleDescriptor.isForwardDeclarationModule: Boolean
+    get() {
+        // TODO: use KlibResolvedModuleDescriptorsFactoryImpl.FORWARD_DECLARATIONS_MODULE_NAME instead of
+        //  manually created Name instance
+        return name == Name.special("<forward declarations>")
+    }
+
+fun BaseKotlinLibrary.isInteropLibrary() =
+        manifestProperties["ir_provider"] == KLIB_INTEROP_IR_PROVIDER_IDENTIFIER
+
+fun ModuleDescriptor.isFromInteropLibrary() =
+        if (klibModuleOrigin !is DeserializedKlibModuleOrigin) false
+        else kotlinLibrary.isInteropLibrary()

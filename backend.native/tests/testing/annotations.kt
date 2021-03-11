@@ -1,8 +1,12 @@
+/*
+ * Copyright 2010-2018 JetBrains s.r.o. Use of this source code is governed by the Apache 2.0 license
+ * that can be found in the LICENSE file.
+ */
+
 package kotlin.test.tests
 
 import kotlin.test.*
-import konan.test.*
-
+import kotlin.native.internal.test.*
 
 @Ignore
 class IgnoredClass {
@@ -20,16 +24,16 @@ object IgnoredObject {
 
 class A {
     companion object {
-        @BeforeEach fun before() { println("before (A.companion)") }
-        @AfterEach fun after() { println("after (A.companion)") }
+        @BeforeTest fun before() { println("before (A.companion)") }
+        @AfterTest fun after() { println("after (A.companion)") }
         @Test fun test1() { println("test1 (A.companion)") }
 
         @BeforeClass fun beforeClass() { println("beforeClass (A.companion)") }
         @AfterClass fun afterClass() { println("afterClass (A.companion)") }
     }
 
-    @BeforeEach fun before() { println("before (A)") }
-    @AfterEach fun after() { println("after (A)") }
+    @BeforeTest fun before() { println("before (A)") }
+    @AfterTest fun after() { println("after (A)") }
     @Test fun test1() { println("test1 (A)") }
     @Ignore @Test fun ignoredTest() { throw AssertionError("Ignored test") }
 
@@ -37,8 +41,8 @@ class A {
     @AfterClass fun afterClass() { println("afterClass (A)") }
 
     object O {
-        @BeforeEach fun before() { println("before (A.object)") }
-        @AfterEach fun after() { println("after (A.object)") }
+        @BeforeTest fun before() { println("before (A.object)") }
+        @AfterTest fun after() { println("after (A.object)") }
         @Test fun test1() { println("test1 (A.object)") }
         @Ignore @Test fun ignoredTest() { throw AssertionError("Ignored test") }
 
@@ -48,8 +52,8 @@ class A {
 }
 
 object O {
-    @BeforeEach fun before() { println("before (object)") }
-    @AfterEach fun after() { println("after (object)") }
+    @BeforeTest fun before() { println("before (object)") }
+    @AfterTest fun after() { println("after (object)") }
     @Test fun test1() { println("test1 (object)") }
     @Ignore @Test fun ignoredTest() { throw AssertionError("Ignored test") }
 
@@ -57,8 +61,8 @@ object O {
     @AfterClass fun afterClass() { println("afterClass (object)") }
 }
 
-@BeforeEach fun before() { println("before (file)") }
-@AfterEach fun after() { println("after (file)") }
+@BeforeTest fun before() { println("before (file)") }
+@AfterTest fun after() { println("after (file)") }
 @Test fun test1() { println("test1 (file)") }
 @Ignore @Test fun ignoredTest() { throw AssertionError("Ignored test") }
 

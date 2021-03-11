@@ -16,56 +16,42 @@
 
 package  org.jetbrains.kotlin.native.interop.tool
 
-import org.jetbrains.kotlin.konan.file.*
-import org.jetbrains.kotlin.konan.properties.*
-import org.jetbrains.kotlin.konan.target.*
-import org.jetbrains.kotlin.konan.util.*
-import kotlin.reflect.KFunction
+import org.jetbrains.kotlin.konan.target.HostManager
+import org.jetbrains.kotlin.konan.target.KonanTarget
+import org.jetbrains.kotlin.konan.target.PlatformManager
+import org.jetbrains.kotlin.konan.target.customerDistribution
+import org.jetbrains.kotlin.konan.util.KonanHomeProvider
+import org.jetbrains.kotlin.konan.util.defaultTargetSubstitutions
+import org.jetbrains.kotlin.native.interop.gen.jvm.KotlinPlatform
 
-class ToolConfig(userProvidedTargetName: String?, userProvidedKonanProperties: String?, runnerProvidedKonanHome: String) {
+class ToolConfig(userProvidedTargetName: String?, flavor: KotlinPlatform) {
 
-    private val targetManager = TargetManager(userProvidedTargetName)
-    private val host = TargetManager.host
-    private val target = targetManager.target
+    private val konanHome = KonanHomeProvider.determineKonanHome()
+    private val distribution = customerDistribution(konanHome)
+    private val platformManager = PlatformManager(distribution)
+    private val targetManager = platformManager.targetManager(userProvidedTargetName)
+    private val host = HostManager.host
+    val target = targetManager.target
 
-    private val konanHome = File(runnerProvidedKonanHome).absolutePath
-    private val konanPropertiesFile = userProvidedKonanProperties ?. File() ?: File(konanHome, "konan/konan.properties")
-    private val properties = konanPropertiesFile.loadProperties()
+    private val platform = platformManager.platform(target)
 
-    private val dependencies = DependencyProcessor.defaultDependenciesRoot
+    val clang = platform.clang
 
-    private val targetProperties = KonanProperties(target, properties, dependencies.path)
+    val substitutions = defaultTargetSubstitutions(target)
 
-    val substitutions = mapOf<String, String> (
-        "target" to target.detailedName,
-        "arch" to target.architecture.visibleName)
+    fun downloadDependencies() = platform.downloadDependencies()
 
-    fun downloadDependencies() = targetProperties.downloadDependencies()
+    val defaultCompilerOpts =
+            platform.clang.targetLibclangArgs.toList()
 
-    val llvmHome = targetProperties.absoluteLlvmHome
+    val platformCompilerOpts = if (flavor == KotlinPlatform.JVM)
+            platform.clang.hostCompilerArgsForJni.toList() else emptyList()
 
-    val sysRoot get() = targetProperties.absoluteTargetSysRoot
+    val llvmHome = platform.absoluteLlvmHome
+    val sysRoot = platform.absoluteTargetSysRoot
 
-    val defaultCompilerOpts = 
-        targetProperties.defaultCompilerOpts()
-
-     val libclang = when (host) {
-        KonanTarget.MINGW -> "$llvmHome/bin/libclang.dll"
+    val libclang = when (host) {
+        KonanTarget.MINGW_X64 -> "$llvmHome/bin/libclang.dll"
         else -> "$llvmHome/lib/${System.mapLibraryName("clang")}"
     }
 }
-
-private fun maybeExecuteHelper(dependenciesRoot: String, properties: Properties, dependencies: List<String>) {
-    try {
-        val kClass = Class.forName("org.jetbrains.kotlin.konan.util.Helper0").kotlin
-        @Suppress("UNCHECKED_CAST")
-        val ctor = kClass.constructors.single() as KFunction<Runnable>
-        val result = ctor.call(dependenciesRoot, properties, dependencies)
-        result.run()
-    } catch (notFound: ClassNotFoundException) {
-        // Just ignore, no helper.
-    } catch (e: Throwable) {
-        throw IllegalStateException("Cannot download dependencies.", e)
-    }
-}
-

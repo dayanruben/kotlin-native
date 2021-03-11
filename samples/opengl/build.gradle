@@ -1,7 +1,0 @@
-apply plugin: 'konan'
-
-konan.targets = ["macbook"]
-
-konanArtifacts {
-    program('OpenGlTeapot')
-}

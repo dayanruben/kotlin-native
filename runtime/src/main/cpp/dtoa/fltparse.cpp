@@ -39,7 +39,7 @@
 
 #define DEFAULT_WIDTH MAX_ACCURACY_WIDTH
 
-extern "C" KFloat Konan_int_bits_to_float(KInt x) {
+extern "C" KFloat Kotlin_native_int_bits_to_float(KInt x) {
   union {
     int32_t x;
     float f;
@@ -538,10 +538,11 @@ OutOfMemory:
 #endif
 
 extern "C" KFloat
-Konan_FloatingPointParser_parseFloatImpl(KString s, KInt e)
+Kotlin_native_FloatingPointParser_parseFloatImpl(KString s, KInt e)
 {
   const KChar* utf16 = CharArrayAddressOfElementAt(s, 0);
   KStdString utf8;
+  utf8.reserve(s->count_);
   TRY_CATCH(utf8::utf16to8(utf16, utf16 + s->count_, back_inserter(utf8)),
             utf8::unchecked::utf16to8(utf16, utf16 + s->count_, back_inserter(utf8)),
             /* Illegal UTF-16 string. */ ThrowNumberFormatException());

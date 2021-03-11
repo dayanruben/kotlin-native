@@ -1,59 +1,37 @@
 /*
- * Copyright 2010-2017 JetBrains s.r.o.
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Copyright 2010-2018 JetBrains s.r.o. Use of this source code is governed by the Apache 2.0 license
+ * that can be found in the LICENSE file.
  */
 
 package kotlin.text
 
-interface Appendable {
-    fun append(c: Char): Appendable
-    fun append(csq: CharSequence?): Appendable
-    fun append(csq: CharSequence?, start: Int, end: Int): Appendable
-}
-
 /**
- * Appends all arguments to the given [Appendable].
+ * An object to which char sequences and values can be appended.
  */
-public fun <T : Appendable> T.append(vararg value: CharSequence?): T {
-    for (item in value)
-        append(item)
-    return this
-}
+public actual interface Appendable {
+    /**
+     * Appends the specified character [value] to this Appendable and returns this instance.
+     *
+     * @param value the character to append.
+     */
+    actual fun append(value: Char): Appendable
 
-/**
- * Appends all arguments to the given StringBuilder.
- */
-public fun StringBuilder.append(vararg value: String?): StringBuilder {
-    for (item in value)
-        append(item)
-    return this
-}
+    /**
+     * Appends the specified character sequence [value] to this Appendable and returns this instance.
+     *
+     * @param value the character sequence to append. If [value] is `null`, then the four characters `"null"` are appended to this Appendable.
+     */
+    actual fun append(value: CharSequence?): Appendable
 
-/**
- * Appends all arguments to the given StringBuilder.
- */
-public fun StringBuilder.append(vararg value: Any?): StringBuilder {
-    for (item in value)
-        append(item)
-    return this
-}
-
-internal fun <T> Appendable.appendElement(element: T, transform: ((T) -> CharSequence)?) {
-    when {
-        transform != null -> append(transform(element))
-        element is CharSequence -> append(element)
-        element is Char -> append(element)
-        else -> append(element.toString())
-    }
+    /**
+     * Appends a subsequence of the specified character sequence [value] to this Appendable and returns this instance.
+     *
+     * @param value the character sequence from which a subsequence is appended. If [value] is `null`,
+     *  then characters are appended as if [value] contained the four characters `"null"`.
+     * @param startIndex the beginning (inclusive) of the subsequence to append.
+     * @param endIndex the end (exclusive) of the subsequence to append.
+     *
+     * @throws IndexOutOfBoundsException or [IllegalArgumentException] when [startIndex] or [endIndex] is out of range of the [value] character sequence indices or when `startIndex > endIndex`.
+     */
+    actual fun append(value: CharSequence?, startIndex: Int, endIndex: Int): Appendable
 }

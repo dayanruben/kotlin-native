@@ -16,113 +16,236 @@
 
 package org.jetbrains.kotlin.konan.target
 
-import org.jetbrains.kotlin.konan.properties.KonanProperties
 import org.jetbrains.kotlin.konan.file.File
 
-class ClangTargetArgs(val target: KonanTarget, konanProperties: KonanProperties) {
+internal object Android {
+    const val API = "21"
+    private val architectureMap = mapOf(
+            KonanTarget.ANDROID_X86 to "x86",
+            KonanTarget.ANDROID_X64 to "x86_64",
+            KonanTarget.ANDROID_ARM32 to "arm",
+            KonanTarget.ANDROID_ARM64 to "arm64"
+    )
 
-    val sysRoot = konanProperties.absoluteTargetSysRoot
-    val targetArg = konanProperties.targetArg
-
-    val specificClangArgs: List<String> get() {
-        val result = when (target) {
-            KonanTarget.LINUX ->
-                listOf("--sysroot=$sysRoot",
-                        "-DUSE_GCC_UNWIND=1", "-DUSE_ELF_SYMBOLS=1", "-DELFSIZE=64")
-            KonanTarget.RASPBERRYPI ->
-                listOf("-target", targetArg!!,
-                        "-mfpu=vfp", "-mfloat-abi=hard",
-                        "-DUSE_GCC_UNWIND=1", "-DUSE_ELF_SYMBOLS=1", "-DELFSIZE=32",
-                        "--sysroot=$sysRoot",
-                        // TODO: those two are hacks.
-                        "-I$sysRoot/usr/include/c++/4.8.3",
-                        "-I$sysRoot/usr/include/c++/4.8.3/arm-linux-gnueabihf")
-
-            KonanTarget.LINUX_MIPS32 ->
-                listOf("-target", targetArg!!,
-                        "-DUSE_GCC_UNWIND=1", "-DUSE_ELF_SYMBOLS=1", "-DELFSIZE=32",
-                        "--sysroot=$sysRoot",
-                        "-I$sysRoot/usr/include/c++/4.9.4",
-                        "-I$sysRoot/usr/include/c++/4.9.4/mips-unknown-linux-gnu")
-
-            KonanTarget.LINUX_MIPSEL32 ->
-                listOf("-target", targetArg!!,
-                        "-DUSE_GCC_UNWIND=1", "-DUSE_ELF_SYMBOLS=1", "-DELFSIZE=32",
-                        "--sysroot=$sysRoot",
-                        "-I$sysRoot/usr/include/c++/4.9.4",
-                        "-I$sysRoot/usr/include/c++/4.9.4/mipsel-unknown-linux-gnu")
-
-            KonanTarget.MINGW ->
-                listOf("-target", targetArg!!, "--sysroot=$sysRoot",
-                        "-DUSE_GCC_UNWIND=1", "-DUSE_PE_COFF_SYMBOLS=1", "-DKONAN_WINDOWS=1", "-Xclang", "-flto-visibility-public-std")
-
-            KonanTarget.MACBOOK ->
-                listOf("--sysroot=$sysRoot", "-mmacosx-version-min=10.11", "-DKONAN_OSX=1",
-                        "-DKONAN_OBJC_INTEROP=1")
-
-            KonanTarget.IPHONE ->
-                listOf("-stdlib=libc++", "-arch", "arm64", "-isysroot", sysRoot, "-miphoneos-version-min=8.0.0",
-                        "-DKONAN_OBJC_INTEROP=1")
-
-            KonanTarget.IPHONE_SIM ->
-                listOf("-stdlib=libc++", "-isysroot", sysRoot, "-miphoneos-version-min=8.0.0",
-                        "-DKONAN_OBJC_INTEROP=1")
-
-            KonanTarget.ANDROID_ARM32 ->
-                listOf("-target", targetArg!!,
-                        "--sysroot=$sysRoot",
-                        "-D__ANDROID__", "-DUSE_GCC_UNWIND=1", "-DUSE_ELF_SYMBOLS=1", "-DELFSIZE=32", "-DKONAN_ANDROID",
-                        // HACKS!
-                        "-I$sysRoot/usr/include/c++/4.9.x",
-                        "-I$sysRoot/usr/include/c++/4.9.x/arm-linux-androideabi")
-
-            KonanTarget.ANDROID_ARM64 ->
-                listOf("-target", targetArg!!,
-                        "--sysroot=$sysRoot",
-                        "-D__ANDROID__", "-DUSE_GCC_UNWIND=1", "-DUSE_ELF_SYMBOLS=1", "-DELFSIZE=64", "-DKONAN_ANDROID",
-                        // HACKS!
-                        "-I$sysRoot/usr/include/c++/4.9.x",
-                        "-I$sysRoot/usr/include/c++/4.9.x/aarch64-linux-android")
-
-            KonanTarget.WASM32 ->
-                listOf("-target", targetArg!!, "-O1", "-fno-rtti", "-fno-exceptions",  "-DKONAN_WASM=1",
-                        "-D_LIBCPP_ABI_VERSION=2", "-D_LIBCPP_NO_EXCEPTIONS=1", "-DKONAN_NO_FFI=1", "-DKONAN_NO_THREADS=1", "-DKONAN_NO_EXCEPTIONS=1",
-                        "-DKONAN_INTERNAL_DLMALLOC=1", "-DKONAN_INTERNAL_SNPRINTF=1", "-DKONAN_INTERNAL_NOW=1",
-                        "-nostdinc", "-Xclang", "-nobuiltininc", "-Xclang", "-nostdsysteminc",
-                        "-Xclang", "-isystem$sysRoot/include/libcxx", "-Xclang", "-isystem$sysRoot/lib/libcxxabi/include",
-                        "-Xclang", "-isystem$sysRoot/include/compat", "-Xclang", "-isystem$sysRoot/include/libc")
-        }
-        return result
-    }
+    fun architectureDirForTarget(target: KonanTarget) =
+            "android-${API}/arch-${architectureMap.getValue(target)}"
 }
 
-class ClangHostArgs(val hostProperties: KonanProperties) {
+class ClangArgs(private val configurables: Configurables) : Configurables by configurables {
 
-    val targetToolchain get() = hostProperties.absoluteTargetToolchain
-    val gccToolchain get() = hostProperties.absoluteGccToolchain
-    val sysRoot get() = hostProperties.absoluteTargetSysRoot
-    val llvmDir get() = hostProperties.absoluteLlvmHome
+    private val targetArg = if (configurables is TargetableConfigurables)
+        configurables.targetArg
+    else null
 
-    val binDir = when(TargetManager.host) {
-        KonanTarget.LINUX -> "$targetToolchain/bin"
-        KonanTarget.MINGW -> "$sysRoot/bin"
-        KonanTarget.MACBOOK -> "$targetToolchain/usr/bin"
+    private val clangArgsSpecificForKonanSources
+        get() = runtimeDefinitions.map { "-D$it" }
+
+    private val binDir = when (HostManager.host) {
+        KonanTarget.LINUX_X64 -> "$absoluteTargetToolchain/bin"
+        KonanTarget.MINGW_X64 -> "$absoluteTargetToolchain/bin"
+        KonanTarget.MACOS_X64 -> "$absoluteTargetToolchain/usr/bin"
         else -> throw TargetSupportException("Unexpected host platform")
     }
+    // TODO: Use buildList
+    private val commonClangArgs: List<String> = mutableListOf<List<String>>().apply {
+        add(listOf("-B$binDir", "-fno-stack-protector"))
+        if (configurables is GccConfigurables) {
+            add(listOf("--gcc-toolchain=${configurables.absoluteGccToolchain}"))
+        }
+        if (configurables is TargetableConfigurables) {
+            add(listOf("-target", configurables.targetArg!!))
+        }
+        val hasCustomSysroot = configurables is ZephyrConfigurables
+                || configurables is WasmConfigurables
+                || configurables is AndroidConfigurables
+        if (!hasCustomSysroot) {
+            when (configurables) {
+                // isysroot and sysroot on darwin are _almost_ synonyms.
+                // The first one parses SDKSettings.json while second one is not.
+                is AppleConfigurables -> add(listOf("-isysroot", absoluteTargetSysRoot))
+                else -> add(listOf("--sysroot=$absoluteTargetSysRoot"))
+            }
 
-    private val extraHostClangArgs = 
-        if (TargetManager.host == KonanTarget.LINUX) {
-            listOf("--gcc-toolchain=$gccToolchain")
-        } else {
-            emptyList()
+        }
+        // PIC is not required on Windows (and Clang will fail with `error: unsupported option '-fPIC'`)
+        if (configurables !is MingwConfigurables) {
+            // `-fPIC` allows us to avoid some problems when producing dynamic library.
+            // See KT-43502.
+            add(listOf("-fPIC"))
+        }
+    }.flatten()
+
+    private val osVersionMin: String
+            get() {
+                require(configurables is AppleConfigurables)
+                return configurables.osVersionMin
+            }
+
+    private val specificClangArgs: List<String> = when (target) {
+        KonanTarget.LINUX_X64, 
+        KonanTarget.LINUX_MIPS32, KonanTarget.LINUX_MIPSEL32,
+        KonanTarget.LINUX_ARM64,
+        KonanTarget.MINGW_X64, KonanTarget.MINGW_X86 -> emptyList()
+
+        KonanTarget.LINUX_ARM32_HFP -> listOf(
+                "-mfpu=vfp", "-mfloat-abi=hard"
+        )
+
+        KonanTarget.MACOS_X64 -> listOf(
+                "-mmacosx-version-min=$osVersionMin"
+        )
+
+        // Here we workaround Clang 8 limitation: macOS major version should be 10.
+        // So we compile runtime with version 10.16 and then override version in BitcodeCompiler.
+        // TODO: Fix with LLVM Update.
+        KonanTarget.MACOS_ARM64 -> listOf(
+                "-arch", "arm64",
+                "-mmacosx-version-min=10.16"
+        )
+
+        KonanTarget.IOS_ARM32 -> listOf(
+                "-stdlib=libc++",
+                "-arch", "armv7",
+                "-miphoneos-version-min=$osVersionMin"
+        )
+
+        KonanTarget.IOS_ARM64 -> listOf(
+                "-stdlib=libc++",
+                "-arch", "arm64",
+                "-miphoneos-version-min=$osVersionMin"
+        )
+
+        KonanTarget.IOS_X64 -> listOf(
+                "-stdlib=libc++",
+                "-miphoneos-version-min=$osVersionMin"
+        )
+
+        KonanTarget.TVOS_ARM64 -> listOf(
+                "-stdlib=libc++",
+                "-arch", "arm64",
+                "-mtvos-version-min=$osVersionMin"
+        )
+
+        KonanTarget.TVOS_X64 -> listOf(
+                "-stdlib=libc++",
+                "-mtvos-simulator-version-min=$osVersionMin"
+        )
+
+        KonanTarget.WATCHOS_ARM64,
+        KonanTarget.WATCHOS_ARM32 -> listOf(
+                "-stdlib=libc++",
+                "-arch", "armv7k",
+                "-mwatchos-version-min=$osVersionMin"
+        )
+
+        KonanTarget.WATCHOS_X86 -> listOf(
+                "-stdlib=libc++",
+                "-arch", "i386",
+                "-mwatchos-simulator-version-min=$osVersionMin"
+        )
+
+        KonanTarget.WATCHOS_X64 -> listOf(
+                "-stdlib=libc++",
+                "-mwatchos-simulator-version-min=$osVersionMin"
+        )
+
+        KonanTarget.ANDROID_ARM32, KonanTarget.ANDROID_ARM64,
+        KonanTarget.ANDROID_X86, KonanTarget.ANDROID_X64 -> {
+            val clangTarget = targetArg!!
+            val architectureDir = Android.architectureDirForTarget(target)
+            val toolchainSysroot = "$absoluteTargetToolchain/sysroot"
+            listOf(
+                    "-D__ANDROID_API__=${Android.API}",
+                    "--sysroot=$absoluteTargetSysRoot/$architectureDir",
+                    "-I$toolchainSysroot/usr/include/c++/v1",
+                    "-I$toolchainSysroot/usr/include",
+                    "-I$toolchainSysroot/usr/include/$clangTarget"
+            )
         }
 
-    val commonClangArgs = listOf("-B$binDir") + extraHostClangArgs
+        // By default WASM target forces `hidden` visibility which causes linkage problems.
+        KonanTarget.WASM32 -> listOf(
+                    "-fno-rtti",
+                    "-fno-exceptions",
+                    "-fvisibility=default",
+                    "-D_LIBCPP_ABI_VERSION=2",
+                    "-D_LIBCPP_NO_EXCEPTIONS=1",
+                    "-nostdinc",
+                    "-Xclang", "-nobuiltininc",
+                    "-Xclang", "-nostdsysteminc",
+                    "-Xclang", "-isystem$absoluteTargetSysRoot/include/libcxx",
+                    "-Xclang", "-isystem$absoluteTargetSysRoot/lib/libcxxabi/include",
+                    "-Xclang", "-isystem$absoluteTargetSysRoot/include/compat",
+                    "-Xclang", "-isystem$absoluteTargetSysRoot/include/libc"
+        )
 
-    val hostClangPath = listOf("$llvmDir/bin", binDir)
+        is KonanTarget.ZEPHYR -> listOf(
+                "-fno-rtti",
+                "-fno-exceptions",
+                "-fno-asynchronous-unwind-tables",
+                "-fno-pie",
+                "-fno-pic",
+                "-fshort-enums",
+                "-nostdinc",
+                // TODO: make it a libGcc property?
+                // We need to get rid of wasm sysroot first.
+                "-isystem $targetToolchain/../lib/gcc/arm-none-eabi/7.2.1/include",
+                "-isystem $targetToolchain/../lib/gcc/arm-none-eabi/7.2.1/include-fixed",
+                "-isystem$absoluteTargetSysRoot/include/libcxx",
+                "-isystem$absoluteTargetSysRoot/include/libc"
+        ) + (configurables as ZephyrConfigurables).constructClangArgs()
+    }
 
-    private val jdkHome = File.jdkHome.absoluteFile.parent
+    val clangPaths = listOf("$absoluteLlvmHome/bin", binDir)
 
-    val hostCompilerArgsForJni = listOf("", TargetManager.jniHostPlatformIncludeDir).map { "-I$jdkHome/include/$it" }
+    private val jdkDir by lazy {
+        val home = File.javaHome.absoluteFile
+        if (home.child("include").exists)
+            home.absolutePath
+        else
+            home.parentFile.absolutePath
+    }
+
+    val hostCompilerArgsForJni = listOf("", HostManager.jniHostPlatformIncludeDir).map { "-I$jdkDir/include/$it" }.toTypedArray()
+
+    val clangArgs = (commonClangArgs + specificClangArgs).toTypedArray()
+
+    val clangArgsForKonanSources =
+            clangArgs + clangArgsSpecificForKonanSources
+
+    val targetLibclangArgs: List<String> =
+            // libclang works not exactly the same way as the clang binary and
+            // (in particular) uses different default header search path.
+            // See e.g. http://lists.llvm.org/pipermail/cfe-dev/2013-November/033680.html
+            // We workaround the problem with -isystem flag below.
+            listOf("-isystem", "$absoluteLlvmHome/lib/clang/$llvmVersion/include", *clangArgs)
+
+    private val targetClangCmd
+            = listOf("${absoluteLlvmHome}/bin/clang") + clangArgs
+
+    private val targetClangXXCmd
+            = listOf("${absoluteLlvmHome}/bin/clang++") + clangArgs
+
+    fun clangC(vararg userArgs: String) = targetClangCmd + userArgs.asList()
+
+    fun clangCXX(vararg userArgs: String) = targetClangXXCmd + userArgs.asList()
+
+    companion object {
+        @JvmStatic
+        fun filterGradleNativeSoftwareFlags(args: MutableList<String>) {
+            args.remove("/usr/include") // HACK: over gradle-4.4.
+            args.remove("-nostdinc") // HACK: over gradle-5.1.
+            when (HostManager.host) {
+                KonanTarget.LINUX_X64 -> args.remove("/usr/include/x86_64-linux-gnu")  // HACK: over gradle-4.4.
+                KonanTarget.MACOS_X64 -> {
+                    val indexToRemove = args.indexOf(args.find { it.contains("MacOSX.platform")})  // HACK: over gradle-4.7.
+                    if (indexToRemove != -1) {
+                        args.removeAt(indexToRemove - 1) // drop -I.
+                        args.removeAt(indexToRemove - 1) // drop /Application/Xcode.app/...
+                    }
+                }
+            }
+        }
+    }
 }
 

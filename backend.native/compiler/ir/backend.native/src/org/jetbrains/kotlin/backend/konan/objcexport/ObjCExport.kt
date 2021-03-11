@@ -1,50 +1,115 @@
 /*
- * Copyright 2010-2017 JetBrains s.r.o.
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Copyright 2010-2018 JetBrains s.r.o. Use of this source code is governed by the Apache 2.0 license
+ * that can be found in the LICENSE file.
  */
 
 package org.jetbrains.kotlin.backend.konan.objcexport
 
+import org.jetbrains.kotlin.backend.konan.*
 import org.jetbrains.kotlin.backend.konan.Context
 import org.jetbrains.kotlin.backend.konan.descriptors.getPackageFragments
+import org.jetbrains.kotlin.backend.konan.descriptors.isInterface
+import org.jetbrains.kotlin.backend.konan.getExportedDependencies
 import org.jetbrains.kotlin.backend.konan.llvm.CodeGenerator
+import org.jetbrains.kotlin.backend.konan.llvm.objcexport.ObjCExportBlockCodeGenerator
 import org.jetbrains.kotlin.backend.konan.llvm.objcexport.ObjCExportCodeGenerator
-import org.jetbrains.kotlin.descriptors.ModuleDescriptor
+import org.jetbrains.kotlin.descriptors.CallableMemberDescriptor
+import org.jetbrains.kotlin.descriptors.ClassDescriptor
+import org.jetbrains.kotlin.descriptors.SourceFile
+import org.jetbrains.kotlin.ir.util.SymbolTable
+import org.jetbrains.kotlin.konan.exec.Command
 import org.jetbrains.kotlin.konan.file.File
-import org.jetbrains.kotlin.konan.target.CompilerOutputKind
-import org.jetbrains.kotlin.konan.target.KonanTarget
+import org.jetbrains.kotlin.konan.file.createTempFile
+import org.jetbrains.kotlin.konan.target.*
 import org.jetbrains.kotlin.name.FqName
 import org.jetbrains.kotlin.name.Name
 import org.jetbrains.kotlin.name.isSubpackageOf
 
-internal class ObjCExport(val context: Context) {
+internal class ObjCExportedInterface(
+        val generatedClasses: Set<ClassDescriptor>,
+        val categoryMembers: Map<ClassDescriptor, List<CallableMemberDescriptor>>,
+        val topLevel: Map<SourceFile, List<CallableMemberDescriptor>>,
+        val headerLines: List<String>,
+        val namer: ObjCExportNamer,
+        val mapper: ObjCExportMapper
+)
 
-    private val target get() = context.config.targetManager.target
+internal class ObjCExport(val context: Context, symbolTable: SymbolTable) {
+    private val target get() = context.config.target
 
-    internal fun produceObjCFramework() {
-        if (context.config.produce != CompilerOutputKind.FRAMEWORK) return
+    private val exportedInterface = produceInterface()
+    private val codeSpec = exportedInterface?.createCodeSpec(symbolTable)
 
-        val headerGenerator = ObjCExportHeaderGenerator(context)
-        headerGenerator.translateModule()
+    private fun produceInterface(): ObjCExportedInterface? {
+        if (!target.family.isAppleFamily) return null
 
-        val namer = headerGenerator.namer
-        val mapper = headerGenerator.mapper
+        if (!context.config.produce.isFinalBinary) return null
 
+        // TODO: emit RTTI to the same modules as classes belong to.
+        //   Not possible yet, since ObjCExport translates the entire "world" API at once
+        //   and can't do this per-module, e.g. due to global name conflict resolution.
+
+        val produceFramework = context.config.produce == CompilerOutputKind.FRAMEWORK
+
+        return if (produceFramework) {
+            val mapper = ObjCExportMapper(context.frontendServices.deprecationResolver)
+            val moduleDescriptors = listOf(context.moduleDescriptor) + context.getExportedDependencies()
+            val objcGenerics = context.configuration.getBoolean(KonanConfigKeys.OBJC_GENERICS)
+            val namer = ObjCExportNamerImpl(
+                    moduleDescriptors.toSet(),
+                    context.moduleDescriptor.builtIns,
+                    mapper,
+                    context.moduleDescriptor.namePrefix,
+                    local = false,
+                    objcGenerics = objcGenerics
+            )
+            val headerGenerator = ObjCExportHeaderGeneratorImpl(context, moduleDescriptors, mapper, namer, objcGenerics)
+            headerGenerator.translateModule()
+            headerGenerator.buildInterface()
+        } else {
+            null
+        }
+    }
+
+    lateinit var namer: ObjCExportNamer
+
+    internal fun generate(codegen: CodeGenerator) {
+        if (!target.family.isAppleFamily) return
+
+        if (context.producedLlvmModuleContainsStdlib) {
+            ObjCExportBlockCodeGenerator(codegen).generate()
+        }
+
+        if (!context.config.produce.isFinalBinary) return // TODO: emit RTTI to the same modules as classes belong to.
+
+        val mapper = exportedInterface?.mapper ?: ObjCExportMapper()
+        namer = exportedInterface?.namer ?: ObjCExportNamerImpl(
+                setOf(codegen.context.moduleDescriptor),
+                context.moduleDescriptor.builtIns,
+                mapper,
+                context.moduleDescriptor.namePrefix,
+                local = false
+        )
+
+        val objCCodeGenerator = ObjCExportCodeGenerator(codegen, namer, mapper)
+
+        if (exportedInterface != null) {
+            produceFrameworkSpecific(exportedInterface.headerLines)
+
+            exportedInterface.generateWorkaroundForSwiftSR10177()
+        }
+
+        objCCodeGenerator.generate(codeSpec)
+        objCCodeGenerator.dispose()
+    }
+
+    private fun produceFrameworkSpecific(headerLines: List<String>) {
         val framework = File(context.config.outputFile)
-        val frameworkContents = when (target) {
-            KonanTarget.IPHONE, KonanTarget.IPHONE_SIM -> framework
-            KonanTarget.MACBOOK -> framework.child("Versions/A")
+        val frameworkContents = when(target.family) {
+            Family.IOS,
+            Family.WATCHOS,
+            Family.TVOS -> framework
+            Family.OSX -> framework.child("Versions/A")
             else -> error(target)
         }
 
@@ -54,7 +119,7 @@ internal class ObjCExport(val context: Context) {
         val headerName = frameworkName + ".h"
         val header = headers.child(headerName)
         headers.mkdirs()
-        header.writeLines(headerGenerator.build())
+        header.writeLines(headerLines)
 
         val modules = frameworkContents.child("Modules")
         modules.mkdirs()
@@ -71,38 +136,39 @@ internal class ObjCExport(val context: Context) {
         modules.child("module.modulemap").writeBytes(moduleMap.toByteArray())
 
         emitInfoPlist(frameworkContents, frameworkName)
-
-        if (target == KonanTarget.MACBOOK) {
+        if (target.family == Family.OSX) {
             framework.child("Versions/Current").createAsSymlink("A")
             for (child in listOf(frameworkName, "Headers", "Modules", "Resources")) {
                 framework.child(child).createAsSymlink("Versions/Current/$child")
             }
         }
-
-        val objCCodeGenerator = ObjCExportCodeGenerator(CodeGenerator(context), namer, mapper)
-        objCCodeGenerator.emitRtti(headerGenerator.generatedClasses, headerGenerator.topLevel)
     }
 
     private fun emitInfoPlist(frameworkContents: File, name: String) {
-        val directory = when (target) {
-            KonanTarget.IPHONE,
-            KonanTarget.IPHONE_SIM -> frameworkContents
-            KonanTarget.MACBOOK -> frameworkContents.child("Resources").also { it.mkdirs() }
+        val directory = when (target.family) {
+            Family.IOS,
+            Family.WATCHOS,
+            Family.TVOS -> frameworkContents
+            Family.OSX -> frameworkContents.child("Resources").also { it.mkdirs() }
             else -> error(target)
         }
 
         val file = directory.child("Info.plist")
-        val bundleExecutable = name
-        val pkg = context.moduleDescriptor.guessMainPackage() // TODO: consider showing warning if it is root.
+        val pkg = guessMainPackage() // TODO: consider showing warning if it is root.
         val bundleId = pkg.child(Name.identifier(name)).asString()
 
         val platform = when (target) {
-            KonanTarget.IPHONE -> "iPhoneOS"
-            KonanTarget.IPHONE_SIM -> "iPhoneSimulator"
-            KonanTarget.MACBOOK -> "MacOSX"
+            KonanTarget.IOS_ARM32, KonanTarget.IOS_ARM64 -> "iPhoneOS"
+            KonanTarget.IOS_X64 -> "iPhoneSimulator"
+            KonanTarget.TVOS_ARM64 -> "AppleTVOS"
+            KonanTarget.TVOS_X64 -> "AppleTVSimulator"
+            KonanTarget.MACOS_X64, KonanTarget.MACOS_ARM64 -> "MacOSX"
+            KonanTarget.WATCHOS_ARM32, KonanTarget.WATCHOS_ARM64 -> "WatchOS"
+            KonanTarget.WATCHOS_X86, KonanTarget.WATCHOS_X64 -> "WatchSimulator"
             else -> error(target)
         }
-        val minimumOsVersion = context.config.distribution.targetProperties.osVersionMin!!
+        val properties = context.config.platform.configurables as AppleConfigurables
+        val minimumOsVersion = properties.osVersionMin
 
         val contents = StringBuilder()
         contents.append("""
@@ -111,7 +177,7 @@ internal class ObjCExport(val context: Context) {
             <plist version="1.0">
             <dict>
                 <key>CFBundleExecutable</key>
-                <string>$bundleExecutable</string>
+                <string>$name</string>
                 <key>CFBundleIdentifier</key>
                 <string>$bundleId</string>
                 <key>CFBundleInfoDictionaryVersion</key>
@@ -131,28 +197,49 @@ internal class ObjCExport(val context: Context) {
 
         """.trimIndent())
 
-
-        contents.append(when (target) {
-            KonanTarget.IPHONE,
-            KonanTarget.IPHONE_SIM -> """
+        fun addUiDeviceFamilies(vararg values: Int) {
+            val xmlValues = values.joinToString(separator = "\n") {
+                "        <integer>$it</integer>"
+            }
+            contents.append("""
                 |    <key>MinimumOSVersion</key>
                 |    <string>$minimumOsVersion</string>
                 |    <key>UIDeviceFamily</key>
                 |    <array>
-                |        <integer>1</integer>
-                |        <integer>2</integer>
+                |$xmlValues       
                 |    </array>
 
-                """.trimMargin()
-            KonanTarget.MACBOOK -> ""
-            else -> error(target)
-        })
+                """.trimMargin())
+        }
 
-        if (target == KonanTarget.IPHONE) {
+        // UIDeviceFamily mapping:
+        // 1 - iPhone
+        // 2 - iPad
+        // 3 - AppleTV
+        // 4 - Apple Watch
+        when (target.family) {
+            Family.IOS -> addUiDeviceFamilies(1, 2)
+            Family.TVOS -> addUiDeviceFamilies(3)
+            Family.WATCHOS -> addUiDeviceFamilies(4)
+            else -> {}
+        }
+
+        if (target == KonanTarget.IOS_ARM64) {
             contents.append("""
                 |    <key>UIRequiredDeviceCapabilities</key>
                 |    <array>
                 |        <string>arm64</string>
+                |    </array>
+
+                """.trimMargin()
+            )
+        }
+
+        if (target == KonanTarget.IOS_ARM32) {
+            contents.append("""
+                |    <key>UIRequiredDeviceCapabilities</key>
+                |    <array>
+                |        <string>armv7</string>
                 |    </array>
 
                 """.trimMargin()
@@ -168,17 +255,61 @@ internal class ObjCExport(val context: Context) {
 
         file.writeBytes(contents.toString().toByteArray())
     }
-}
 
-internal fun ModuleDescriptor.guessMainPackage(): FqName {
-    val allPackages = this.getPackageFragments() // Includes also all parent packages, e.g. the root one.
+    // See https://bugs.swift.org/browse/SR-10177
+    private fun ObjCExportedInterface.generateWorkaroundForSwiftSR10177() {
+        // Code for all protocols from the header should get into the binary.
+        // Objective-C protocols ABI is complicated (consider e.g. undocumented extended type encoding),
+        // so the easiest way to achieve this (quickly) is to compile a stub by clang.
 
-    val nonEmptyPackages = allPackages
+        val protocolsStub = listOf(
+                "__attribute__((used)) static void __workaroundSwiftSR10177() {",
+                buildString {
+                    append("    ")
+                    generatedClasses.forEach {
+                        if (it.isInterface) {
+                            val protocolName = namer.getClassOrProtocolName(it).objCName
+                            append("@protocol($protocolName); ")
+                        }
+                    }
+                },
+                "}"
+        )
+
+        val source = createTempFile("protocols", ".m").deleteOnExit()
+        source.writeLines(headerLines + protocolsStub)
+
+        val bitcode = createTempFile("protocols", ".bc").deleteOnExit()
+
+        val clangCommand = context.config.clang.clangC(
+                source.absolutePath,
+                "-O2",
+                "-emit-llvm",
+                "-c", "-o", bitcode.absolutePath
+        )
+
+        val result = Command(clangCommand).getResult(withErrors = true)
+
+        if (result.exitCode == 0) {
+            context.llvm.additionalProducedBitcodeFiles += bitcode.absolutePath
+        } else {
+            // Note: ignoring compile errors intentionally.
+            // In this case resulting framework will likely be unusable due to compile errors when importing it.
+        }
+    }
+
+    private fun guessMainPackage(): FqName {
+        val allPackages = (context.getIncludedLibraryDescriptors() + context.moduleDescriptor).flatMap {
+            it.getPackageFragments() // Includes also all parent packages, e.g. the root one.
+        }
+
+        val nonEmptyPackages = allPackages
             .filter { it.getMemberScope().getContributedDescriptors().isNotEmpty() }
             .map { it.fqName }.distinct()
 
-    return allPackages.map { it.fqName }.distinct()
+        return allPackages.map { it.fqName }.distinct()
             .filter { candidate -> nonEmptyPackages.all { it.isSubpackageOf(candidate) } }
             // Now there are all common ancestors of non-empty packages. Longest of them is the least common accessor:
-            .maxBy { it.asString().length }!!
+            .maxByOrNull { it.asString().length }!!
+    }
 }

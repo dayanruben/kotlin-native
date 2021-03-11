@@ -16,25 +16,32 @@
 
 package org.jetbrains.kotlin.native.interop.gen
 
-import org.jetbrains.kotlin.native.interop.indexer.HeaderId
-import org.jetbrains.kotlin.native.interop.indexer.HeaderInclusionPolicy
-import org.jetbrains.kotlin.native.interop.indexer.Location
+import org.jetbrains.kotlin.konan.library.KonanLibrary
+import org.jetbrains.kotlin.native.interop.indexer.*
 
 interface Imports {
     fun getPackage(location: Location): String?
 }
 
-class ImportsImpl(internal val headerIdToPackage: Map<HeaderId, String>) : Imports {
 
-    override fun getPackage(location: Location): String? =
-            headerIdToPackage[location.headerId]
+class PackageInfo(val name: String, val library: KonanLibrary)
 
+class ImportsImpl(internal val headerIdToPackage: Map<HeaderId, PackageInfo>) : Imports {
+
+    override fun getPackage(location: Location): String? {
+        val packageInfo = headerIdToPackage[location.headerId]
+                ?: return null
+        accessedLibraries += packageInfo.library
+        return packageInfo.name
+    }
+
+    private val accessedLibraries = mutableSetOf<KonanLibrary>()
+
+    val requiredLibraries: Set<KonanLibrary>
+        get() = accessedLibraries.toSet()
 }
 
-class HeadersInclusionPolicyImpl(
-        private val nameGlobs: List<String>,
-        private val importsImpl: ImportsImpl
-) : HeaderInclusionPolicy {
+class HeaderInclusionPolicyImpl(private val nameGlobs: List<String>) : HeaderInclusionPolicy {
 
     override fun excludeUnused(headerName: String?): Boolean {
         if (nameGlobs.isEmpty()) {
@@ -48,6 +55,11 @@ class HeadersInclusionPolicyImpl(
 
         return nameGlobs.all { !headerName.matchesToGlob(it) }
     }
+}
+
+class HeaderExclusionPolicyImpl(
+        private val importsImpl: ImportsImpl
+) : HeaderExclusionPolicy {
 
     override fun excludeAll(headerId: HeaderId): Boolean {
         return headerId in importsImpl.headerIdToPackage

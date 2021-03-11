@@ -16,8 +16,19 @@
 
 apply plugin: "cpp"
 apply plugin: "c"
+buildscript {
+    ext.rootBuildDirectory = file('..')
 
-ext.isEnabled = isMac()
+    apply from: "$rootBuildDirectory/gradle/kotlinGradlePlugin.gradle"
+
+    dependencies {
+        classpath "org.jetbrains.kotlin:kotlin-stdlib:$kotlinVersion"
+        classpath "org.jetbrains.kotlin:kotlin-native-shared:$konanVersion"
+    }
+}
+import org.jetbrains.kotlin.konan.target.ClangArgs
+import org.jetbrains.kotlin.PlatformInfo
+ext.isEnabled = PlatformInfo.isMac()
 
 model {
     components {
@@ -29,7 +40,9 @@ model {
                 }
             }
             binaries.withType(StaticLibraryBinarySpec) { binary ->
-                cppCompiler.args "--std=c++11", "-g", "-fPIC", "-I${llvmDir}/include"
+                if (!project.parent.convention.plugins.platformInfo.isWindows())
+                    cppCompiler.args "-fPIC"
+                cppCompiler.args "--std=c++17", "-g", "-I${llvmDir}/include"
                 if (isEnabled) {
                     cppCompiler.args '-DLIBCLANGEXT_ENABLE=1'
                 }
@@ -40,15 +53,10 @@ model {
         }
     }
 
-  /* HACK over gradle 4.4, it adds /usr/include, that affects our --sysroot flag */
   toolChains {
     clang(Clang) {
       eachPlatform {
-        cppCompiler.withArguments { args ->
-          args.remove "/usr/include"
-          if (isLinux())
-            args.remove "/usr/include/x86_64-linux-gnu"
-        }
+        cppCompiler.withArguments(ClangArgs.&filterGradleNativeSoftwareFlags)
       }
     }
   }

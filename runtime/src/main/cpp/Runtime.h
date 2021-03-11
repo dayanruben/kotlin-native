@@ -17,18 +17,39 @@
 #ifndef RUNTIME_RUNTIME_H
 #define RUNTIME_RUNTIME_H
 
-struct RuntimeState;
+#include "Porting.h"
+
 struct InitNode;
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-void Kotlin_initRuntimeIfNeeded();
+// Must match DestroyRuntimeMode in DestroyRuntimeMode.kt
+enum DestroyRuntimeMode {
+    DESTROY_RUNTIME_LEGACY = 0,
+    DESTROY_RUNTIME_ON_SHUTDOWN = 1,
+};
+
+DestroyRuntimeMode Kotlin_getDestroyRuntimeMode();
+
+RUNTIME_NOTHROW void Kotlin_initRuntimeIfNeeded();
 void Kotlin_deinitRuntimeIfNeeded();
+
+// Can only be called once.
+// No new runtimes can be initialized on any thread after this.
+// Must be called on a thread with active runtime.
+// Using already initialized runtimes on any thread after this is undefined behaviour.
+void Kotlin_shutdownRuntime();
 
 // Appends given node to an initializer list.
 void AppendToInitializersTail(struct InitNode*);
+
+bool Kotlin_memoryLeakCheckerEnabled();
+
+bool Kotlin_cleanersLeakCheckerEnabled();
+
+bool Kotlin_forceCheckedShutdown();
 
 #ifdef __cplusplus
 }

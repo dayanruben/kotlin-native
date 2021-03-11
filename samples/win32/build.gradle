@@ -1,9 +1,0 @@
-apply plugin: 'konan'
-
-konan.targets = ['mingw']
-
-konanArtifacts {
-    program('MessageBox') {
-        linkerOpts "-Wl,--subsystem,windows"
-    }
-}

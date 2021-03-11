@@ -1,30 +1,67 @@
 /*
- * Copyright 2010-2017 JetBrains s.r.o.
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Copyright 2010-2018 JetBrains s.r.o. Use of this source code is governed by the Apache 2.0 license
+ * that can be found in the LICENSE file.
  */
 
 package kotlin.text
 
+/** Appends [value] to this [StringBuilder], followed by a line feed character (`\n`). */
+@SinceKotlin("1.4")
+@kotlin.internal.InlineOnly
+public inline fun StringBuilder.appendLine(value: Byte): StringBuilder = append(value).appendLine()
 
-fun StringBuilder.appendln(it: String) = append(it).appendln()
-fun StringBuilder.appendln(it: Boolean) = append(it).appendln()
-fun StringBuilder.appendln(it: Byte) = append(it).appendln()
-fun StringBuilder.appendln(it: Short) = append(it).appendln()
-fun StringBuilder.appendln(it: Int) = append(it).appendln()
-fun StringBuilder.appendln(it: Long) = append(it).appendln()
-fun StringBuilder.appendln(it: Float) = append(it).appendln()
-fun StringBuilder.appendln(it: Double) = append(it).appendln()
-fun StringBuilder.appendln(it: Any?) = append(it).appendln()
+/** Appends [value] to this [StringBuilder], followed by a line feed character (`\n`). */
+@SinceKotlin("1.4")
+@kotlin.internal.InlineOnly
+public inline fun StringBuilder.appendLine(value: Short): StringBuilder = append(value).appendLine()
 
-fun StringBuilder.appendln() = append('\n')
+/** Appends [value] to this [StringBuilder], followed by a line feed character (`\n`). */
+@SinceKotlin("1.4")
+@kotlin.internal.InlineOnly
+public inline fun StringBuilder.appendLine(value: Int): StringBuilder = append(value).appendLine()
+
+/** Appends [value] to this [StringBuilder], followed by a line feed character (`\n`). */
+@SinceKotlin("1.4")
+@kotlin.internal.InlineOnly
+public inline fun StringBuilder.appendLine(value: Long): StringBuilder = append(value).appendLine()
+
+/** Appends [value] to this [StringBuilder], followed by a line feed character (`\n`). */
+@SinceKotlin("1.4")
+@kotlin.internal.InlineOnly
+public inline fun StringBuilder.appendLine(value: Float): StringBuilder = append(value).appendLine()
+
+/** Appends [value] to this [StringBuilder], followed by a line feed character (`\n`). */
+@SinceKotlin("1.4")
+@kotlin.internal.InlineOnly
+public inline fun StringBuilder.appendLine(value: Double): StringBuilder = append(value).appendLine()
+
+
+@Deprecated("Use appendLine instead", ReplaceWith("appendLine(it)"), level = DeprecationLevel.WARNING)
+public fun StringBuilder.appendln(it: String): StringBuilder = appendLine(it)
+
+@Deprecated("Use appendLine instead", ReplaceWith("appendLine(it)"), level = DeprecationLevel.WARNING)
+public fun StringBuilder.appendln(it: Boolean): StringBuilder = appendLine(it)
+
+@Deprecated("Use appendLine instead", ReplaceWith("appendLine(it)"), level = DeprecationLevel.WARNING)
+public fun StringBuilder.appendln(it: Byte): StringBuilder = appendLine(it)
+
+@Deprecated("Use appendLine instead", ReplaceWith("appendLine(it)"), level = DeprecationLevel.WARNING)
+public fun StringBuilder.appendln(it: Short): StringBuilder = appendLine(it)
+
+@Deprecated("Use appendLine instead", ReplaceWith("appendLine(it)"), level = DeprecationLevel.WARNING)
+public fun StringBuilder.appendln(it: Int): StringBuilder = appendLine(it)
+
+@Deprecated("Use appendLine instead", ReplaceWith("appendLine(it)"), level = DeprecationLevel.WARNING)
+public fun StringBuilder.appendln(it: Long): StringBuilder = appendLine(it)
+
+@Deprecated("Use appendLine instead", ReplaceWith("appendLine(it)"), level = DeprecationLevel.WARNING)
+public fun StringBuilder.appendln(it: Float): StringBuilder = appendLine(it)
+
+@Deprecated("Use appendLine instead", ReplaceWith("appendLine(it)"), level = DeprecationLevel.WARNING)
+public fun StringBuilder.appendln(it: Double): StringBuilder = appendLine(it)
+
+@Deprecated("Use appendLine instead", ReplaceWith("appendLine(it)"), level = DeprecationLevel.WARNING)
+public fun StringBuilder.appendln(it: Any?): StringBuilder = appendLine(it)
+
+@Deprecated("Use appendLine instead", ReplaceWith("appendLine()"), level = DeprecationLevel.WARNING)
+public fun StringBuilder.appendln(): StringBuilder = appendLine()

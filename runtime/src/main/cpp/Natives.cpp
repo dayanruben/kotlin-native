@@ -14,13 +14,14 @@
  * limitations under the License.
  */
 
-#include <limits.h>
-#include <stdint.h>
-#include <stdlib.h>
-#include <stdio.h>
-#include <string.h>
+#include <cstdint>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <limits>
+#include <type_traits>
 
-#include "Assert.h"
+#include "KAssert.h"
 #include "Exceptions.h"
 #include "Memory.h"
 #include "Natives.h"
@@ -39,21 +40,23 @@ KInt Kotlin_Any_hashCode(KConstRef thiz) {
   return reinterpret_cast<uintptr_t>(thiz);
 }
 
-OBJ_GETTER0(Kotlin_getCurrentStackTrace) {
-  RETURN_RESULT_OF0(GetCurrentStackTrace);
+OBJ_GETTER(Kotlin_getStackTraceStrings, KConstRef stackTrace) {
+  RETURN_RESULT_OF(GetStackTraceStrings, stackTrace);
 }
 
 // TODO: consider handling it with compiler magic instead.
-OBJ_GETTER0(Kotlin_konan_internal_undefined) {
+OBJ_GETTER0(Kotlin_native_internal_undefined) {
   RETURN_OBJ(nullptr);
 }
 
 void* Kotlin_interop_malloc(KLong size, KInt align) {
-  if (size > SIZE_MAX) {
+  if (size < 0 || static_cast<std::make_unsigned_t<decltype(size)>>(size) > std::numeric_limits<size_t>::max()) {
     return nullptr;
   }
+  RuntimeAssert(align > 0, "Unsupported alignment");
+  RuntimeAssert((align & (align - 1)) == 0, "Alignment must be power of two");
 
-  void* result = konan::calloc(1, size);
+  void* result = konan::calloc_aligned(1, size, align);
   if ((reinterpret_cast<uintptr_t>(result) & (align - 1)) != 0) {
     // Unaligned!
     RuntimeAssert(false, "unsupported alignment");
@@ -72,6 +75,10 @@ void Kotlin_system_exitProcess(KInt status) {
 
 const void* Kotlin_Any_getTypeInfo(KConstRef obj) {
   return obj->type_info();
+}
+
+void Kotlin_CPointer_CopyMemory(KNativePtr to, KNativePtr from, KInt count) {
+  memcpy(to, from, count);
 }
 
 }  // extern "C"
